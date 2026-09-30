@@ -1,3 +1,10 @@
+/** The scene and DOM must cross the portrait boundary together. */
+export const PORTRAIT_ASPECT = 1.05;
+
+export function isPortraitViewport(width: number, height: number) {
+  return Math.max(1, width) / Math.max(1, height) < PORTRAIT_ASPECT;
+}
+
 /** Reference coordinates remain exact during the film and at 1920 × 1080. */
 export function viewportLayout(width: number, height: number, coarse: boolean, cinematic = false) {
   width = Math.max(1, width);
@@ -6,7 +13,7 @@ export function viewportLayout(width: number, height: number, coarse: boolean, c
     width: 1920, height: 1080, scale: Math.min(width / 1920, height / 1080),
     kind: "cinematic" as const,
   };
-  const portrait = width / height < 1.05;
+  const portrait = isPortraitViewport(width, height);
   const compact = portrait || width < 1100 || (coarse && height < 600);
   const scale = compact ? 1 : height / 1080;
   return { width: width / scale, height: height / scale, scale,
@@ -15,8 +22,10 @@ export function viewportLayout(width: number, height: number, coarse: boolean, c
 
 /** Preserve the long-lens perspective. Reframe only the camera, never the card. */
 export function archiveFraming(width: number, height: number, span: number, detail: number, compact: boolean) {
+  width = Math.max(1, width);
+  height = Math.max(1, height);
   const aspect = width / height;
-  const portrait = aspect < 1.05;
+  const portrait = isPortraitViewport(width, height);
   const baseSpan = span + (5.9 - span) * detail;
   const portraitDetailSpan = Math.max(6.3 / aspect, 3.7 * height / Math.max(100, 0.54 * height - 156));
   const viewSpan = portrait

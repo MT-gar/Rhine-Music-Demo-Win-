@@ -3,10 +3,13 @@ import type { ArchiveNavigation } from "./archive-loop.ts";
 export interface AlbumSelection {
   index: number;
   navigation?: ArchiveNavigation;
+  /** Search navigation returns to the archive before selecting and reopening. */
+  route?: "archive";
 }
 
 export type MusicPresentationPhase =
-  | "archive" | "opening" | "detail" | "hiding" | "returning" | "selecting";
+  | "archive" | "opening" | "detail" | "switch-hiding" | "switching"
+  | "hiding" | "returning" | "selecting";
 
 export interface MusicPresentationPorts {
   presentationReady(): boolean;
@@ -15,6 +18,7 @@ export interface MusicPresentationPorts {
   enterCamera(): void;
   returnCamera(): void;
   select(selection: AlbumSelection): void;
+  switchDetail(selection: AlbumSelection): void;
   prepareMenu(): void;
   showMenu(): void;
   hideMenu(done: () => void): void;
@@ -37,7 +41,15 @@ export class MusicPresentation {
 
   open() {
     this.wantsDetail = true;
-    if (this.phase === "archive") this.beginOpen();
+    if (this.phase === "archive") {
+      if (this.ports.archiveReady()) this.beginOpen();
+      else {
+        // Opening just after a selection must start at its settled preview
+        // height, so the shared lift/camera progress has a continuous origin.
+        this.phase = "selecting";
+        this.ports.hideBrowse(() => {});
+      }
+    }
   }
 
   back() {
@@ -54,16 +66,33 @@ export class MusicPresentation {
   select(selection: AlbumSelection, openAfter = this.wantsDetail) {
     this.pendingSelection = selection;
     this.wantsDetail = openAfter;
+    const switchInDetail = openAfter && selection.route !== "archive";
     if (this.phase === "archive") {
       this.commitSelection();
       if (openAfter) {
         this.phase = "selecting";
         this.ports.hideBrowse(() => {});
       }
+    } else if (switchInDetail && (this.phase === "detail" || this.phase === "opening")) {
+      this.beginDetailSwitch();
+    } else if (switchInDetail && (this.phase === "switch-hiding" || this.phase === "switching")) {
+      // Keep the latest target without restarting the text exit or rail motion.
+      return;
     } else if (this.phase !== "selecting") this.beginExit();
   }
 
   update() {
+    if (this.phase === "switching") {
+      if (this.pendingSelection) {
+        this.commitDetailSwitch();
+        return; // Read readiness only after the scene has advanced the new target.
+      }
+      if (this.browseHidden && this.ports.presentationReady()) {
+        this.phase = "detail";
+        this.ports.showMenu();
+      }
+      return;
+    }
     if (this.phase === "opening") {
       if (this.browseHidden && this.ports.presentationReady()) {
         this.phase = "detail";
@@ -118,15 +147,46 @@ export class MusicPresentation {
   }
 
   private beginExit() {
-    if (this.phase === "hiding" || this.phase === "returning") return;
+    if (this.phase === "hiding" || this.phase === "returning" || this.phase === "switch-hiding") return;
     const revision = ++this.revision;
     this.phase = "hiding";
     this.ports.hideMenu(() => {
       if (revision !== this.revision) return;
-      this.phase = "returning";
-      this.ports.mode("archive");
-      this.ports.returnCamera();
+      this.returnToArchive();
     });
+  }
+
+  private beginDetailSwitch() {
+    const revision = ++this.revision;
+    this.phase = "switch-hiding";
+    // An input may arrive during the very first opening's browse exit.
+    if (!this.browseHidden) this.ports.hideBrowse(() => {
+      if (revision === this.revision) this.browseHidden = true;
+    });
+    this.ports.hideMenu(() => {
+      if (revision !== this.revision) return;
+      if (!this.wantsDetail || this.pendingSelection?.route === "archive") {
+        // Esc or a search reuses the text exit already in progress. Search
+        // keeps its target until the archive camera and rail have settled.
+        this.returnToArchive();
+        return;
+      }
+      this.phase = "switching";
+      if (this.pendingSelection) this.commitDetailSwitch();
+    });
+  }
+
+  private commitDetailSwitch() {
+    const request = this.pendingSelection!;
+    this.pendingSelection = undefined;
+    this.ports.switchDetail(request);
+    this.ports.prepareMenu();
+  }
+
+  private returnToArchive() {
+    this.phase = "returning";
+    this.ports.mode("archive");
+    this.ports.returnCamera();
   }
 
   private commitSelection() {

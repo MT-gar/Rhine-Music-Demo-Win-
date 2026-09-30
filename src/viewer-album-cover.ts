@@ -1,11 +1,11 @@
 import * as THREE from "three";
-import { COVER_SIZE, containCover } from "./cover-atlas";
+import { COVER_SIZE, COVER_INSET, containCover } from "./cover-atlas";
 import type { MusicAlbum } from "./music-types";
 import { createAlbumPrintMaterial } from "./music-model.ts";
 
 /** A viewer owns its own print and texture, independent of the array's selection. */
 export class ViewerAlbumCover {
-  readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshLambertMaterial>;
   readonly ready: Promise<void>;
   private readonly canvas = document.createElement("canvas");
   private readonly texture: THREE.CanvasTexture;
@@ -31,6 +31,7 @@ export class ViewerAlbumCover {
       createAlbumPrintMaterial(this.texture),
     );
     this.mesh.name = "Album cover print";
+    this.mesh.receiveShadow = true;
     this.mesh.userData.albumCover = true;
     this.mesh.userData.albumId = album.id;
     this.mesh.userData.assemblyPart = "cover";
@@ -42,11 +43,12 @@ export class ViewerAlbumCover {
   private paintPlaceholder() {
     const context = this.canvas.getContext("2d")!;
     const { width, height } = this.canvas;
-    const size = height - 4,
+    const margin = width * COVER_INSET,
+      size = height - margin * 2,
       left = (width - size) / 2;
     context.clearRect(0, 0, width, height);
     context.fillStyle = "#c9c9c4";
-    context.fillRect(left, 2, size, size);
+    context.fillRect(left, margin, size, size);
     context.strokeStyle = "#f8f7f1";
     context.lineWidth = height / 180;
     for (const radius of [0.2, 0.04]) {
@@ -83,14 +85,15 @@ export class ViewerAlbumCover {
       if (this.disposed || this.mesh.userData.coverDisposed) return;
       const context = this.canvas.getContext("2d")!;
       const { width, height } = this.canvas;
+      const margin = width * COVER_INSET;
       const box = containCover(
         image.naturalWidth,
         image.naturalHeight,
-        width - 4,
-        height - 4,
+        width - margin * 2,
+        height - margin * 2,
       );
       context.clearRect(0, 0, width, height);
-      context.drawImage(image, box.x + 2, box.y + 2, box.width, box.height);
+      context.drawImage(image, box.x + margin, box.y + margin, box.width, box.height);
       this.mesh.userData.coverStatus = "loaded";
       this.mesh.userData.coverImageSize = [
         image.naturalWidth,

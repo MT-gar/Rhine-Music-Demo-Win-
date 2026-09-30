@@ -10,6 +10,7 @@ export interface MusicPlayerState {
   duration: number;
   currentTime: number;
   volume: number;
+  songFadeEnabled: boolean;
   bgmVolume: number;
   bgmEnabled: boolean;
   bgmPlaying: boolean;
@@ -23,15 +24,27 @@ type Listener = (state: MusicPlayerState) => void;
 type Transport = MusicPlayerState["transport"];
 type Fade = { timer: ReturnType<typeof setTimeout>; finish: () => void };
 
+const SONG_FADE_MS = 450;
 const unit = (value: number) => Math.max(0, Math.min(1, value));
 const seconds = (value: number) =>
   Number.isFinite(value) && value > 0 ? value : 0;
+const uniqueTracks = (tracks: readonly MusicTrack[]): MusicTrack[] => {
+  const seen = new Set<string>();
+  return tracks.filter((track) => {
+    if (seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
+};
 
 /** Music transport is independent from TerminalAudio and the Three.js scene lifecycle. */
 export class MusicPlayer {
   private value: Omit<MusicPlayerState, "transport">;
   private listeners = new Set<Listener>();
   private song?: HTMLAudioElement;
+  private songTrackId?: string;
+  private songGain = 1;
+  private songFade?: Fade;
   private readonly bgm: HTMLAudioElement;
   private transport: Transport = "idle";
   private operation = 0;
@@ -44,7 +57,12 @@ export class MusicPlayer {
   private pendingSeek: number | null = null;
 
   constructor(
-    options: { volume?: number; bgmVolume?: number; bgmEnabled?: boolean } = {},
+    options: {
+      volume?: number;
+      songFadeEnabled?: boolean;
+      bgmVolume?: number;
+      bgmEnabled?: boolean;
+    } = {},
   ) {
     this.value = {
       currentTrack: null,
@@ -55,6 +73,7 @@ export class MusicPlayer {
       duration: 0,
       currentTime: 0,
       volume: Number.isFinite(options.volume) ? unit(options.volume!) : 0.7,
+      songFadeEnabled: options.songFadeEnabled ?? true,
       bgmVolume: Number.isFinite(options.bgmVolume)
         ? unit(options.bgmVolume!)
         : 0.18,
@@ -87,12 +106,7 @@ export class MusicPlayer {
 
   setQueue(tracks: readonly MusicTrack[]): void {
     if (this.disposed) return;
-    const seen = new Set<string>();
-    const queue = tracks.filter((track) => {
-      if (seen.has(track.id)) return false;
-      seen.add(track.id);
-      return true;
-    });
+    const queue = uniqueTracks(tracks);
     const id = this.value.currentTrack?.id;
     const index = queue.findIndex((track) => track.id === id);
     this.value.queue = queue;
@@ -107,36 +121,59 @@ export class MusicPlayer {
     this.emit();
   }
 
-  async play(id: string): Promise<void> {
+  async play(id: string, tracks?: readonly MusicTrack[]): Promise<void> {
     if (this.disposed) return;
-    const index = this.value.queue.findIndex((track) => track.id === id);
+    const queue = tracks ? uniqueTracks(tracks) : this.value.queue;
+    const index = queue.findIndex((track) => track.id === id);
     if (index === -1) {
       this.value.error = "这首歌曲已不在播放队列中，请重新选择。";
       this.emit();
       return;
     }
-    const track = this.value.queue[index];
+    const track = queue[index];
+    // Updating the queue in a play request keeps cross-album switches in the same fade.
+    this.value.queue = queue;
     const request = ++this.operation;
+    this.cancelSongFade();
     const resume =
-      this.value.currentTrack?.id === id && this.song && !this.song.ended;
-    if (!resume) this.releaseSong();
+      this.songTrackId === id && this.song && !this.song.ended
+        ? this.song
+        : undefined;
     this.value.currentTrack = track;
     this.value.currentIndex = index;
     this.value.error = null;
     this.value.loading = true;
     this.transport = "loading";
-    if (!resume) {
-      this.value.playing = false;
-      this.value.currentTime = 0;
-      this.value.duration = seconds(track.duration);
-    }
+    this.value.playing = !!resume && !resume.paused;
+    this.value.currentTime = resume
+      ? this.pendingSeek ?? seconds(resume.currentTime)
+      : 0;
+    this.value.duration =
+      (resume ? seconds(resume.duration) : 0) || seconds(track.duration);
+    if (!resume) this.pendingSeek = null;
     const unsupported = this.unsupported(track);
     if (unsupported) {
       this.fail(unsupported);
       return;
     }
-    const audio = this.song ?? this.createSong(track);
     this.emit();
+    if (request !== this.operation || this.disposed) return;
+
+    if (!resume) {
+      const outgoing = this.song;
+      if (
+        outgoing &&
+        !outgoing.paused &&
+        !outgoing.ended &&
+        this.value.songFadeEnabled
+      ) {
+        await this.fadeSong(outgoing, 0);
+        if (request !== this.operation || this.disposed) return;
+      }
+      // Release the outgoing source before the next one can start: songs never overlap.
+      this.releaseSong();
+    }
+    const audio = this.song ?? this.createSong(track);
 
     // A shared transition promise keeps rapid BGM toggles from bypassing this silence gate.
     await this.reconcileBgm();
@@ -153,6 +190,10 @@ export class MusicPlayer {
         this.value.playing = true;
         this.value.loading = false;
         this.emit();
+        if (request !== this.operation || this.disposed || this.song !== audio)
+          return;
+        if (this.value.songFadeEnabled) await this.fadeSong(audio, 1);
+        else this.setSongGain(1);
       }
     } catch (error) {
       if (request !== this.operation || this.disposed || this.song !== audio)
@@ -165,8 +206,11 @@ export class MusicPlayer {
     if (this.disposed) return;
     if (this.transport === "loading" || this.transport === "playing") {
       ++this.operation;
+      this.cancelSongFade();
       this.transport = "paused";
       this.song?.pause();
+      if (this.songTrackId !== this.value.currentTrack?.id) this.releaseSong();
+      else this.setSongGain(1);
       this.value.playing = false;
       this.value.loading = false;
       this.emit();
@@ -198,7 +242,13 @@ export class MusicPlayer {
   }
 
   seek(position: number): void {
-    if (this.disposed || !this.song || !Number.isFinite(position)) return;
+    if (
+      this.disposed ||
+      !this.song ||
+      this.songTrackId !== this.value.currentTrack?.id ||
+      !Number.isFinite(position)
+    )
+      return;
     const duration = seconds(this.song.duration) || this.value.duration;
     const target = Math.max(
       0,
@@ -226,7 +276,18 @@ export class MusicPlayer {
   setVolume(volume: number): void {
     if (this.disposed || !Number.isFinite(volume)) return;
     this.value.volume = unit(volume);
-    if (this.song) this.song.volume = this.value.volume;
+    this.setSongGain(this.songGain);
+    this.emit();
+  }
+
+  setSongFadeEnabled(enabled: boolean): void {
+    if (this.disposed) return;
+    this.value.songFadeEnabled = enabled;
+    if (!enabled) {
+      this.cancelSongFade();
+      // A pending switch will release the old song as soon as its fade resolves.
+      if (this.songTrackId === this.value.currentTrack?.id) this.setSongGain(1);
+    }
     this.emit();
   }
 
@@ -266,9 +327,14 @@ export class MusicPlayer {
   private createSong(track: MusicTrack): HTMLAudioElement {
     const audio = new Audio();
     this.song = audio;
+    this.songTrackId = track.id;
+    this.songGain = this.value.songFadeEnabled ? 0 : 1;
     audio.preload = "metadata";
-    audio.volume = this.value.volume;
-    const active = () => !this.disposed && this.song === audio;
+    this.setSongGain(this.songGain);
+    const active = () =>
+      !this.disposed &&
+      this.song === audio &&
+      this.value.currentTrack?.id === track.id;
     audio.addEventListener("loadedmetadata", () => {
       if (!active()) return;
       this.value.duration = seconds(audio.duration) || seconds(track.duration);
@@ -302,6 +368,10 @@ export class MusicPlayer {
       this.emit();
     });
     audio.addEventListener("pause", () => {
+      if (!active() && this.song === audio && audio.paused) {
+        this.cancelSongFade();
+        return;
+      }
       if (
         !active() ||
         this.transport !== "playing" ||
@@ -309,13 +379,22 @@ export class MusicPlayer {
         !audio.paused
       )
         return;
+      ++this.operation;
+      this.cancelSongFade();
+      this.setSongGain(1);
       this.transport = "paused";
       this.value.playing = false;
       this.value.loading = false;
       this.emit();
     });
     audio.addEventListener("ended", () => {
+      if (!active() && this.song === audio && audio.ended) {
+        // The outgoing song can finish naturally during its fade-out.
+        this.cancelSongFade();
+        return;
+      }
       if (!active() || this.transport !== "playing") return;
+      this.cancelSongFade();
       this.value.playing = false;
       this.value.loading = false;
       this.value.currentTime = this.value.duration;
@@ -332,6 +411,7 @@ export class MusicPlayer {
     });
     audio.addEventListener("error", () => {
       if (active()) this.fail(this.playbackError(track, audio.error));
+      else if (this.song === audio) this.cancelSongFade();
     });
     audio.src = `/api/audio/${encodeURIComponent(track.id)}`;
     return audio;
@@ -355,13 +435,58 @@ export class MusicPlayer {
   }
 
   private releaseSong(): void {
+    this.cancelSongFade();
     const old = this.song;
     this.song = undefined;
+    this.songTrackId = undefined;
+    this.songGain = 1;
     this.pendingSeek = null;
     if (!old) return;
     old.pause();
     old.removeAttribute("src");
     old.load();
+  }
+
+  private setSongGain(gain: number): void {
+    this.songGain = unit(gain);
+    if (this.song) this.song.volume = unit(this.value.volume * this.songGain);
+  }
+
+  private fadeSong(audio: HTMLAudioElement, target: number): Promise<void> {
+    this.cancelSongFade();
+    if (this.song !== audio) return Promise.resolve();
+    const start = this.songGain;
+    if (audio.paused || audio.ended || Math.abs(start - target) < 0.001) {
+      this.setSongGain(target);
+      return Promise.resolve();
+    }
+    const startedAt = performance.now();
+    return new Promise((resolve) => {
+      const fade: Fade = {
+        timer: 0 as unknown as ReturnType<typeof setTimeout>,
+        finish: resolve,
+      };
+      const step = () => {
+        if (this.songFade !== fade) return;
+        const progress = Math.min(1, (performance.now() - startedAt) / SONG_FADE_MS);
+        this.setSongGain(start + (target - start) * progress);
+        if (progress < 1) fade.timer = setTimeout(step, 16);
+        else {
+          this.songFade = undefined;
+          resolve();
+        }
+      };
+      this.songFade = fade;
+      step();
+    });
+  }
+
+  private cancelSongFade(): void {
+    if (!this.songFade) return;
+    const fade = this.songFade;
+    this.songFade = undefined;
+    clearTimeout(fade.timer);
+    fade.finish();
   }
 
   private expectsSong(): boolean {

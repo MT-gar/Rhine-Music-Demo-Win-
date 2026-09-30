@@ -58,41 +58,60 @@ function verifyPresentation(hz, reduced = false) {
   const presentation = new MusicPresentation();
   const pan = new MusicPlacementMotion();
   const rig = setup();
-  const history = [];
+  const archiveCamera = rig.camera.position.clone();
+  const detailAim = new THREE.Vector3(2.6222222222, 1.85, 0);
+  const yaw = THREE.MathUtils.degToRad(8), elevation = THREE.MathUtils.degToRad(20);
+  const detailCamera = detailAim.clone().addScaledVector(new THREE.Vector3(
+    -Math.sin(yaw) * Math.cos(elevation), Math.sin(elevation), Math.cos(yaw) * Math.cos(elevation),
+  ), 72);
+  const pose = (progress) => ({
+    aim: detailAim.clone().multiplyScalar(progress),
+    camera: archiveCamera.clone().lerp(detailCamera, progress),
+    height: 7.33 + (5.9 - 7.33) * progress,
+  });
   presentation.request('detail');
-  let liftReady = false;
-  let elapsed = 0;
+  assert.equal(presentation.phase, 'placing', 'Extraction and placement start in the same phase');
+  assert.equal(presentation.placed, true, 'The shared movement starts without a frontal-centering gate');
+  assert.equal(presentation.holdsDetail, true);
+  const history = [presentation.phase];
+  presentation.update(1, false, true, reduced);
+  assert.equal(presentation.phase, 'placing', 'Placement readiness cannot bypass a moving camera');
+  presentation.update(1, true, false, reduced);
+  assert.equal(presentation.phase, 'placing', 'Camera readiness cannot bypass a moving extraction');
   for (let frame = 0; frame < hz * 8; frame++) {
-    elapsed += 1 / hz;
-    liftReady = elapsed > .8;
-    const placed = pan.update(Number(presentation.placed), 1 / hz, reduced);
-    const aim = new THREE.Vector3(placed * 2.6222222222, 1.85, 0);
-    const camera = aim.clone().add(new THREE.Vector3(0, 0, 72));
-    rig.motion.update(rig.camera, rig.aim, camera, aim, 5.9, 1 / hz, reduced);
+    const progress = pan.update(Number(presentation.holdsDetail), 1 / hz, reduced);
+    if (frame === 0) assert.ok(progress > 0, 'The first entry frame advances the common movement');
+    const { aim, camera, height } = pose(progress);
+    rig.motion.update(rig.camera, rig.aim, camera, aim, height, 1 / hz, reduced);
     const previous = presentation.phase;
     presentation.update(1 / hz,
-      rig.motion.isSettled(rig.camera, rig.aim, camera, aim, 5.9), liftReady && pan.settled, reduced);
+      rig.motion.isSettled(rig.camera, rig.aim, camera, aim, height), pan.settled, reduced);
     if (previous !== presentation.phase) {
       history.push(presentation.phase);
-      if (presentation.phase === 'placing') {
-        assert.ok(liftReady, 'Lift must finish before the sideways presentation');
-        assert.ok(rig.camera.position.clone().sub(rig.aim).normalize().distanceTo(new THREE.Vector3(0, 0, 1)) < .001,
-          'The rendered camera is already frontal before leaving the center');
-        assert.ok(Math.abs(rig.aim.x) < .006, 'The center stage is genuinely centered');
-      }
+      assert.ok(pan.settled, 'Presentation waits for the common extraction and placement endpoint');
+      assert.ok(rig.motion.isSettled(rig.camera, rig.aim, camera, aim, height),
+        'Presentation also waits for the displayed camera to settle');
     }
     if (presentation.phase === 'presented') break;
   }
   assert.deepEqual(history, ['placing', 'presented']);
+  const displayedDirection = rig.camera.position.clone().sub(rig.aim).normalize();
+  assert.ok(Math.abs(Math.asin(displayedDirection.y) - elevation) < .001,
+    'The displayed detail camera preserves the elevated inspection angle');
   presentation.request('archive');
   assert.equal(presentation.phase, 'returning-center');
-  assert.equal(presentation.holdsDetail, true, 'Return holds altitude until the center is reached');
+  presentation.returnWhenAligned(false);
+  presentation.update(1, true, true, reduced);
+  assert.equal(presentation.phase, 'returning-center', 'A manually rotated box must align before returning');
+  assert.equal(presentation.holdsDetail, true, 'Alignment holds the shared extraction and camera endpoint');
+  assert.equal(pan.update(Number(presentation.holdsDetail), 1 / hz, reduced), 1);
+  presentation.returnWhenAligned(true);
+  assert.equal(presentation.phase, 'returning-array', 'An aligned box begins the common return immediately');
+  assert.equal(presentation.holdsDetail, false);
+  history.push(presentation.phase);
   for (let frame = 0; frame < hz * 8; frame++) {
-    const centered = presentation.phase === 'returning-center';
-    const placement = pan.update(0, 1 / hz, reduced);
-    const aim = centered ? new THREE.Vector3(placement * 2.6222222222, 1.85, 0) : new THREE.Vector3();
-    const camera = centered ? aim.clone().add(new THREE.Vector3(0, 0, 72)) : new THREE.Vector3(-62, 36, 43);
-    const height = centered ? 5.9 : 7.33;
+    const progress = pan.update(Number(presentation.holdsDetail), 1 / hz, reduced);
+    const { aim, camera, height } = pose(progress);
     rig.motion.update(rig.camera, rig.aim, camera, aim, height, 1 / hz, reduced);
     const previous = presentation.phase;
     presentation.update(1 / hz,
@@ -103,9 +122,14 @@ function verifyPresentation(hz, reduced = false) {
   assert.deepEqual(history, ['placing', 'presented', 'returning-array', 'archive']);
   presentation.request('detail');
   presentation.request('archive');
+  presentation.returnWhenAligned(true);
+  assert.equal(presentation.phase, 'returning-array', 'An unrotated entry can reverse on its first return frame');
   presentation.request('detail');
-  assert.equal(presentation.phase, 'centering-front', 'Rapid reversal restarts from the displayed camera');
+  assert.equal(presentation.phase, 'placing', 'Rapid reversal resumes the same shared movement');
+  presentation.returnWhenAligned(true);
+  assert.equal(presentation.phase, 'placing', 'A stale alignment signal cannot undo a reopened detail');
   presentation.request('hidden');
+  presentation.returnWhenAligned(true);
   assert.equal(presentation.phase, 'hidden', 'Replay clears all readiness');
   presentation.request('archive');
   assert.equal(presentation.phase, 'returning-array', 'Skip waits for the archive camera');
@@ -184,5 +208,5 @@ for (const hz of [30, 120]) {
     tracks[key].velocity = speed;
   }
 }
-console.log('Music camera passed: continuous motion, frame-rate independence, oblique pause, centered frontal ending, measured presentation/return gates, interruption, replay and reduced motion.');
+console.log('Music camera passed: continuous motion, frame-rate independence, original-film oblique pause/frontal ending, shared entry/return gates, elevated detail, interruption, replay and reduced motion.');
 console.log(`Presentation pan: ${(pan240.early * 100).toFixed(3)}% at 0.2 s; 95% at ${pan240.t95.toFixed(3)} s (rendered camera, 240 Hz).`);

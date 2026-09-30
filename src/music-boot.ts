@@ -174,10 +174,12 @@ export class MusicBoot {
     fade(".library-status", 45);
     fade(".music-bottomline", 90);
     fade(".music-empty", 60);
-    // Keep navigation geometry stable for the title layout's bottom clearance.
-    fade(".music-navigation", 110);
-    // Browse opacity belongs exclusively to SurfaceTransition. Move only its
-    // children, using the independent translate property to preserve transforms.
+    // SurfaceTransition owns the navigation container's opacity. Stagger its
+    // inner groups so the intro never reads/overrides that in-flight fade.
+    for (const selector of [".music-counter", ".album-stepper", ".genre-stepper"])
+      fade(selector, 110);
+    // Keep navigation geometry stable for the title's bottom clearance. Move
+    // callout/keyhint with independent translate, preserving existing transforms.
     for (const [selector, delay] of [
       [".album-callout", 60], [".music-keyhint", 140],
     ] as const) {

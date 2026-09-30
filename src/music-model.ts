@@ -72,10 +72,22 @@ export function setMusicGlassClarity(material: THREE.MeshPhysicalMaterial, clari
 }
 
 export function createAlbumPrintMaterial(map: THREE.Texture) {
-  return new THREE.MeshBasicMaterial({
+  // Matte ink receives the same diffuse lights and shadows as the archive.
+  // It has no specular lobe, glow or glass layer to bleach the printed colours.
+  const material = new THREE.MeshLambertMaterial({
     map,
     alphaTest: 0.025,
     toneMapped: false,
-    fog: false,
+    fog: true,
   });
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      // Keep strong key lighting within the print's original colour range.
+      // A zero/weak diffuse light still produces a zero/dim print, unlike Basic.
+      "outgoingLight = min(outgoingLight, diffuseColor.rgb);\n#include <opaque_fragment>",
+    );
+  };
+  material.customProgramCacheKey = () => "album-diffuse-print-v1";
+  return material;
 }

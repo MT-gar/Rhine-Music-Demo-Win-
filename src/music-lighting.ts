@@ -14,6 +14,7 @@ export class MusicSelectionLighting {
   private readonly column = { value: new THREE.Vector3() };
   private readonly scatterColor = { value: new THREE.Color("#ffdba3") };
   private readonly scatterStrength = { value: 1 };
+  private readonly printAmbient = { value: 0.5 };
   private readonly shellBounds = { value: new THREE.Vector4(
     MUSIC_MODEL.center.x - MUSIC_MODEL.width / 2,
     MUSIC_MODEL.center.y - MUSIC_MODEL.height / 2,
@@ -44,7 +45,40 @@ export class MusicSelectionLighting {
     targets.number(this.spot, "intensity", (night ? 130 : 180) * 64);
     targets.color(this.scatterColor.value, night ? "#cee5ff" : "#ffdba3");
     targets.number(this.scatterStrength, "value", night ? 0.72 : 1);
+    targets.number(this.printAmbient, "value", night ? 0.12 : theme === "dusk" ? 0.38 : 0.5);
     if (!transition) targets.finish();
+  }
+
+  /** Diffuse printed art shares the moving light field, never the shell's glow.
+   * All ownership states use world transforms, so changing instance/mesh cannot
+   * change the exposure; extraction and return pass continuously through it.
+   */
+  shadePrint(shader: THREE.WebGLProgramParametersWithUniforms) {
+    shader.uniforms.musicPrintLightColumn = this.column;
+    shader.uniforms.musicPrintAmbient = this.printAmbient;
+    shader.vertexShader = "varying vec3 vMusicPrintOrigin;\n" + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>", `
+      #include <begin_vertex>
+      vec4 musicPrintOrigin = vec4(0.0, 0.0, 0.0, 1.0);
+      #ifdef USE_INSTANCING
+        musicPrintOrigin = instanceMatrix * musicPrintOrigin;
+      #endif
+      vMusicPrintOrigin = (modelMatrix * musicPrintOrigin).xyz;
+    `);
+    shader.fragmentShader = `
+      varying vec3 vMusicPrintOrigin;
+      uniform vec3 musicPrintLightColumn;
+      uniform float musicPrintAmbient;
+    ` + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace("#include <opaque_fragment>", `
+      // The low local key reaches nearby rows/lanes; the stacked shelf shelters
+      // the rest. The lifted cover stays in the light while its neighbors fall
+      // below it. This attenuation only removes diffuse light, never adds white.
+      vec3 printDistance = (vMusicPrintOrigin - musicPrintLightColumn) / vec3(6.0, 3.35, 5.5);
+      float printLight = exp(-dot(printDistance, printDistance));
+      outgoingLight *= mix(musicPrintAmbient, 1.0, printLight);
+      #include <opaque_fragment>
+    `);
   }
 
   /** Shared by instances, the lifted CD and returning copies; no extra render pass.

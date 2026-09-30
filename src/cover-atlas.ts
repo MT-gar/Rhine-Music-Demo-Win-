@@ -6,6 +6,11 @@ import { MUSIC_COVER, createAlbumPrintMaterial } from "./music-model.ts";
 // Print on the glass surface. No transmitting/frosted layer sits over the image.
 export const COVER_SIZE = MUSIC_COVER;
 type CoverImage = { source: HTMLCanvasElement; width: number; height: number };
+const COVER_PAINT_SIZE = 1024;
+// Use the same UV margin at every texture resolution. A fixed two-pixel inset
+// made the 256px atlas artwork smaller than its 1024px lifted/returning copy.
+export const COVER_INSET = 1 / 128;
+const COVER_PAINT_MARGIN = COVER_PAINT_SIZE * COVER_INSET;
 
 export function containCover(
   width: number,
@@ -33,25 +38,29 @@ function paintCover(
   image?: CoverImage,
 ) {
   const context = canvas.getContext("2d")!;
-  const width = canvas.width,
-    height = canvas.height;
+  // Paint in one logical coordinate space, including fallback art and labels.
+  // Ownership can move between atlas/selection/snapshot without rescaling art.
+  const width = COVER_PAINT_SIZE,
+    height = COVER_PAINT_SIZE,
+    margin = COVER_PAINT_MARGIN;
+  context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
   context.clearRect(0, 0, width, height);
   if (image) {
-    const box = containCover(image.width, image.height, width - 4, height - 4);
+    const box = containCover(image.width, image.height, width - margin * 2, height - margin * 2);
     context.drawImage(
       image.source,
-      box.x + 2,
-      box.y + 2,
+      box.x + margin,
+      box.y + margin,
       box.width,
       box.height,
     );
     return;
   }
   // A missing cover is explicit and never substituted with another album's art.
-  const size = height - 4,
+  const size = height - margin * 2,
     left = (width - size) / 2;
   context.fillStyle = "#c9c9c4";
-  context.fillRect(left, 2, size, size);
+  context.fillRect(left, margin, size, size);
   context.strokeStyle = "#f8f7f1";
   context.lineWidth = Math.max(1, height / 180);
   context.beginPath();
@@ -81,14 +90,15 @@ function paintCover(
 /** One fixed-size atlas for the visible pool, regardless of total library size. */
 export class CoverAtlas {
   readonly array: THREE.InstancedMesh;
-  readonly selected: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  readonly selected: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshLambertMaterial>;
   private readonly atlasCanvas = document.createElement("canvas");
   private readonly selectedCanvas = document.createElement("canvas");
   private readonly tileCanvas = document.createElement("canvas");
   private readonly atlas: THREE.CanvasTexture;
   private readonly selectedTexture: THREE.CanvasTexture;
   private readonly images = new Map<string, Promise<CoverImage | undefined>>();
-  private readonly slots: (ArchiveRecord | undefined)[];
+  private readonly slotKeys: (string | undefined)[];
+  private readonly recordKeys = new WeakMap<ArchiveRecord, string>();
   private selectedRecord?: ArchiveRecord;
   private generation = 0;
   private disposed = false;
@@ -97,7 +107,7 @@ export class CoverAtlas {
   private readonly tileWidth: number;
   private readonly tileHeight: number;
 
-  constructor(count: number, maxTextureSize: number, anisotropy: number, _lit = false, _lighting?: MusicSelectionLighting) {
+  constructor(count: number, maxTextureSize: number, anisotropy: number, lighting?: MusicSelectionLighting) {
     this.rows = Math.ceil(count / this.columns);
     this.tileWidth = Math.min(
       256,
@@ -109,9 +119,9 @@ export class CoverAtlas {
     this.atlasCanvas.height = this.rows * this.tileHeight;
     this.tileCanvas.width = this.tileWidth;
     this.tileCanvas.height = this.tileHeight;
-    this.selectedCanvas.width = 1024;
-    this.selectedCanvas.height = 1024;
-    this.slots = Array(count);
+    this.selectedCanvas.width = COVER_PAINT_SIZE;
+    this.selectedCanvas.height = COVER_PAINT_SIZE;
+    this.slotKeys = Array(count);
     this.atlas = new THREE.CanvasTexture(this.atlasCanvas);
     this.atlas.colorSpace = THREE.SRGBColorSpace;
     // No whole-atlas mip pyramid: independent transparent tile margins prevent bleed.
@@ -141,35 +151,47 @@ export class CoverAtlas {
       "coverTile",
       new THREE.InstancedBufferAttribute(tileOffsets, 4),
     );
-    // Artwork uses the same independent, unlit surface in the shelf, selection
-    // and outgoing snapshots. Glass highlights never wash out printed colours.
-    const material = createAlbumPrintMaterial(this.atlas);
-    material.onBeforeCompile = (shader) => {
+    // Instances, selected art and snapshots use one matte diffuse material and
+    // one moving light field; no ownership-specific brightness/scale switches.
+    const makePrint = (texture: THREE.Texture) => {
+      const print = createAlbumPrintMaterial(texture);
+      const compile = print.onBeforeCompile;
+      print.onBeforeCompile = (shader, renderer) => {
+        compile.call(print, shader, renderer);
+        lighting?.shadePrint(shader);
+      };
+      print.customProgramCacheKey = () => `album-diffuse-print-${Boolean(lighting)}-v1`;
+      return print;
+    };
+    const material = makePrint(this.atlas);
+    const compileAtlas = material.onBeforeCompile;
+    material.onBeforeCompile = (shader, renderer) => {
+      compileAtlas.call(material, shader, renderer);
       shader.vertexShader = "attribute vec4 coverTile;\n" + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         "#include <uv_vertex>",
         "#include <uv_vertex>\nvMapUv = coverTile.xy + uv * coverTile.zw;",
       );
     };
-    material.customProgramCacheKey = () => "album-cover-surface-atlas-v3";
+    material.customProgramCacheKey = () => `album-diffuse-atlas-${Boolean(lighting)}-v1`;
     this.array = new THREE.InstancedMesh(geometry, material, count);
     this.array.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.array.frustumCulled = false;
     this.array.visible = false;
     this.array.name = "Album cover atlas";
-    this.array.receiveShadow = false;
+    this.array.receiveShadow = true;
     this.selected = new THREE.Mesh(
       new THREE.PlaneGeometry(COVER_SIZE.width, COVER_SIZE.height).translate(
         COVER_SIZE.x,
         COVER_SIZE.y,
         COVER_SIZE.z,
       ),
-      createAlbumPrintMaterial(this.selectedTexture),
+      makePrint(this.selectedTexture),
     );
     this.selected.userData.albumCover = true;
     this.selected.visible = false;
     this.selected.name = "Selected album cover";
-    this.selected.receiveShadow = false;
+    this.selected.receiveShadow = true;
   }
 
   private loadImage(url?: string) {
@@ -204,10 +226,18 @@ export class CoverAtlas {
   }
 
   setSlot(slot: number, record: ArchiveRecord | undefined) {
-    if (this.slots[slot] === record) return;
-    this.slots[slot] = record;
+    // Description/metadata refreshes replace record objects without changing
+    // their print. Cache only the visual identity, not the object reference.
+    let key = record ? this.recordKeys.get(record) : "";
+    if (record && key === undefined) {
+      key = JSON.stringify([record.id, record.album?.coverUrl, record.title]);
+      this.recordKeys.set(record, key);
+    }
+    if (this.slotKeys[slot] === key) return;
+    this.slotKeys[slot] = key;
+    const generation = this.generation;
     const draw = (image?: CoverImage) => {
-      if (this.disposed || this.slots[slot] !== record) return;
+      if (this.disposed || generation !== this.generation || this.slotKeys[slot] !== key) return;
       paintCover(this.tileCanvas, record, image);
       const x = (slot % this.columns) * this.tileWidth,
         y = Math.floor(slot / this.columns) * this.tileHeight;
@@ -247,7 +277,7 @@ export class CoverAtlas {
     mesh.material = this.selected.material.clone();
     mesh.material.onBeforeCompile = this.selected.material.onBeforeCompile;
     mesh.material.customProgramCacheKey = this.selected.material.customProgramCacheKey;
-    (mesh.material as THREE.MeshBasicMaterial | THREE.MeshStandardMaterial).map = texture;
+    (mesh.material as THREE.MeshLambertMaterial).map = texture;
     const record = this.selectedRecord;
     mesh.userData.coverDisposed = false;
     void this.loadImage(record?.album?.coverUrl).then((image) => {
@@ -259,7 +289,7 @@ export class CoverAtlas {
 
   reset() {
     this.generation++;
-    this.slots.fill(undefined);
+    this.slotKeys.fill(undefined);
     this.selectedRecord = undefined;
     this.images.clear();
   }

@@ -57,6 +57,13 @@
 .music-app [hidden] {
   display: none !important;
 }
+/* Keep browse text measurable during the 3D intro/return. Its children are
+   positioned overlays, so this preserves glyph layout without taking space. */
+.music-app #music-browse[hidden] {
+  display: block !important;
+  visibility: hidden;
+  pointer-events: none;
+}
 .music-app button:focus-visible,
 .music-app a:focus-visible,
 .music-app input:focus-visible,
@@ -531,14 +538,13 @@
   gap: 20px;
 }
 /* Clear surface prints retain their colours; keep reading areas independent. */
-.music-browse::before {
-  content: "";
+.music-browse-veil {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background: linear-gradient(90deg, transparent 34%, var(--veil) 57%, var(--page-bg) 96%);
 }
-.music-app[data-layout="portrait"] .music-browse::before {
+.music-app[data-layout="portrait"] .music-browse-veil {
   background: linear-gradient(180deg, transparent 28%, var(--page-bg) 62%);
 }
 .music-app[data-layout="portrait"] .music-detail::before {
@@ -704,6 +710,13 @@
 }
 .track-row.playing {
   color: var(--accent);
+}
+.track-row {
+  --search-track-tint: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.track-row.search-track-highlight {
+  background: var(--search-track-tint);
+  box-shadow: inset 3px 0 var(--accent);
 }
 .disc-heading {
   font-size: 8px;
@@ -1040,6 +1053,10 @@
   font-weight: 500;
   display: block;
   line-height: 1.5;
+}
+.album-result .result-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .album-result small {
   font-size: 10px;
@@ -1489,16 +1506,6 @@
   .music-vignette {
     bottom: 0;
   }
-  .album-callout {
-    left: 23px;
-    right: 23px;
-    top: auto;
-    bottom: 150px;
-    max-width: none;
-    background: linear-gradient(90deg, var(--veil), transparent);
-    padding: 10px 12px;
-    margin-left: -12px;
-  }
   .album-callout h1 {
     font-size: 25px;
     margin-bottom: 6px;
@@ -1643,8 +1650,6 @@
   }
   .card-caption {
     left: 22px;
-    bottom: auto;
-    top: 43%;
     gap: 5px;
   }
   .card-caption > span {
@@ -1656,13 +1661,6 @@
   .card-caption button {
     font-size: 9px;
     margin-top: 2px;
-  }
-  .music-detail #album-detail-content {
-    left: 22px;
-    right: 18px;
-    top: 50%;
-    bottom: 28px;
-    padding-right: 5px;
   }
   .detail-overline {
     margin-bottom: 12px;
@@ -1733,6 +1731,24 @@
   .producer-section p {
     font-size: 10px;
   }
+}
+
+/* Placement follows the scene's aspect-ratio state, independently of font sizing. */
+.music-app[data-layout="portrait"] #album-detail-content {
+  left: clamp(22px, 4vw, 42px);
+  right: clamp(18px, 4vw, 42px);
+  top: 50%;
+  bottom: 28px;
+  padding-right: 5px;
+}
+.music-app[data-layout="portrait"] .card-caption {
+  left: clamp(22px, 4vw, 42px);
+  bottom: auto;
+  top: 43%;
+  gap: 5px;
+}
+.music-app[data-layout="portrait"] .card-caption > small {
+  display: none;
 }
 
 .music-identity {
@@ -2175,10 +2191,6 @@
   }
 }
 @media (max-width: 700px) {
-  .album-callout {
-    top: max(145px, 44%);
-    bottom: var(--callout-bottom, 135px);
-  }
   .album-callout h1 {
     font-size: var(--album-title-size, 25px);
     max-width: 100%;
@@ -2217,7 +2229,7 @@
   font-size: 10px;
 }
 
-/* Original 460 ms reels; keep native multiline measurements outside their DOM. */
+/* Original 460 ms reels; title glyph geometry is measured outside their DOM. */
 .music-rolling-text,
 .music-rolling-number {
   --rn-blur: 0;
@@ -2228,11 +2240,9 @@
 }
 .music-title-layout {
   display: block;
+  height: 0;
   visibility: hidden;
   pointer-events: none;
-}
-.music-title-layout > [hidden] {
-  display: none;
 }
 .music-title-rolling {
   position: absolute;
@@ -2241,11 +2251,52 @@
   overflow-clip-margin: 0.08em;
   pointer-events: none;
 }
-.music-title-reel.rn-root {
+.album-callout h1.music-title-probe {
+  --album-title-size: initial;
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+  min-height: 0;
+  contain: layout style paint;
+  visibility: hidden;
+  pointer-events: none;
+}
+.music-title-candidate {
+  position: absolute;
+  inset: 0 0 auto;
+  display: block;
+  line-height: 1.16;
+}
+.music-title-slot {
   position: absolute;
   left: 0;
+  top: 0;
+  box-sizing: content-box;
+  padding-inline: 0.15em;
+  margin-inline-start: -0.15em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent, #000 0.08em, #000 calc(100% - 0.08em), transparent);
 }
-.music-title-reel-translation {
+.music-title-wheel {
+  position: absolute;
+  left: 0.15em;
+  top: 0;
+  width: calc(100% - 0.3em);
+  height: 100%;
+}
+.music-title-face {
+  position: absolute;
+  inset: 0;
+  display: block;
+  white-space: pre;
+  /* Descenders of an outgoing face must not bleed into the next reel face.
+     Keep side bearings free; the vertical bounds match the resting viewport. */
+  clip-path: inset(0 -0.15em);
+}
+.music-title-slot-translation {
   color: var(--muted);
 }
 
@@ -2278,7 +2329,7 @@
   padding: 10px 12px;
   background: linear-gradient(90deg, var(--veil), transparent);
 }
-.music-app[data-layout="portrait"] .music-browse::before {
+.music-app[data-layout="portrait"] .music-browse-veil {
   background: linear-gradient(
     180deg,
     transparent calc(var(--portrait-callout-top) - 12vh),

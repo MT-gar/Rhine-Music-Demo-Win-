@@ -43,10 +43,11 @@ assert.ok(MUSIC_COVER.x + MUSIC_COVER.width / 2 < bounds.max.x);
 assert.ok(MUSIC_COVER.y - MUSIC_COVER.height / 2 > bounds.min.y);
 assert.ok(MUSIC_COVER.y + MUSIC_COVER.height / 2 < bounds.max.y);
 const print = createAlbumPrintMaterial(new THREE.Texture());
-assert.equal(print.isMeshBasicMaterial, true);
+assert.equal(print.isMeshLambertMaterial, true);
 assert.equal(print.toneMapped, false);
-assert.equal(print.fog, false);
+assert.equal(print.fog, true);
 assert.equal(print.transparent, false);
+assert.equal(print.emissive.getHex(), 0, "Artwork emits no light of its own");
 appearance.prepare(appearanceModel);
 const printedCover = new THREE.Mesh(new THREE.PlaneGeometry(MUSIC_COVER.width, MUSIC_COVER.height), print);
 printedCover.userData.albumCover = true;
@@ -66,4 +67,4 @@ for (const theme of ["day", "night", "dusk"]) {
     assert.equal(JSON.stringify(print.toJSON()), printBefore, "Frosting, selection quality and themes do not mutate the artwork material");
   }
 }
-console.log("Music glass model passed: actual GLB 5 × 3.35 × 0.14, single normalisation, no rings/screws, 0.012 clear-print gap, frosted glass including final inspection, unchanged artwork across appearance states.");
+console.log("Music glass model passed: actual GLB 4.45 × 3.35 × 0.14, single normalisation, no rings/screws, 0.012 clear-print gap, V0.1.1b frosted glass including final inspection, independent diffuse artwork across appearance states.");

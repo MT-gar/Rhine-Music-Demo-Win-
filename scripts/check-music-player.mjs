@@ -110,6 +110,7 @@ test('BGM has an independent default, live volume, zero-volume gate, and clamped
   const env = environment(t)
   const player = new MusicPlayer({ volume: 0 })
   const bgm = env.instances[0]
+  assert.equal(player.state.songFadeEnabled, true)
   assert.equal(player.state.bgmVolume, 0.18)
   assert.equal(bgm.playCalls, 0, 'no autoplay before a gesture')
   env.gesture()
@@ -140,7 +141,8 @@ test('BGM has an independent default, live volume, zero-volume gate, and clamped
 
 test('song playback waits for BGM silence despite rapid BGM volume and toggle changes', async (t) => {
   const env = environment(t)
-  const player = new MusicPlayer({ volume: 0.65, bgmVolume: 0.3 })
+  // Isolate BGM timing from the optional song envelope in this transport check.
+  const player = new MusicPlayer({ volume: 0.65, bgmVolume: 0.3, songFadeEnabled: false })
   player.setQueue([track('first')])
   env.gesture()
   await env.advance(700)
@@ -206,7 +208,7 @@ test('rapidly cancelling a pending song restores only the latest BGM volume', as
 
 test('a late BGM play resolution stays silent when a song has taken over', async (t) => {
   const env = environment(t)
-  const player = new MusicPlayer({ bgmVolume: 0.4 })
+  const player = new MusicPlayer({ bgmVolume: 0.4, songFadeEnabled: false })
   const bgm = env.instances[0]
   bgm.holdPlay = true
   player.setQueue([track('first')])

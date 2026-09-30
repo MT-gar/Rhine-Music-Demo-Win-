@@ -33,6 +33,11 @@ function fixture({ reduced = false } = {}) {
       events.push({ select: structuredClone(selection) });
       ready.archive = reduced;
     },
+    switchDetail(selection) {
+      events.push({ switchDetail: structuredClone(selection) });
+      ready.archive = false;
+      ready.presentation = reduced;
+    },
     prepareMenu: () => events.push('menu:prepare'),
     showMenu: () => events.push('menu:show'),
     hideMenu(done) {
@@ -64,11 +69,12 @@ function fixture({ reduced = false } = {}) {
     motion.update();
     assert.equal(motion.phase, 'detail');
   };
-  const selections = () => events.filter((event) => typeof event === 'object').map((event) => event.select);
-  return { motion, events, ready, ports, finishBrowse, finishMenu, openDetail, selections, browseExits, menuExits };
+  const selections = () => events.filter((event) => typeof event === 'object' && 'select' in event).map((event) => event.select);
+  const detailSelections = () => events.filter((event) => typeof event === 'object' && 'switchDetail' in event).map((event) => event.switchDetail);
+  return { motion, events, ready, ports, finishBrowse, finishMenu, openDetail, selections, detailSelections, browseExits, menuExits };
 }
 
-test('menu waits for both browse exit and completed front/left camera presentation', () => {
+test('menu waits for both browse exit and completed elevated camera presentation', () => {
   const f = fixture();
   f.motion.open();
   assert.equal(f.motion.phase, 'opening');
@@ -89,34 +95,141 @@ test('menu waits for both browse exit and completed front/left camera presentati
   assert.equal(f.events.filter((event) => event === 'menu:show').length, 1);
 });
 
-test('switch waits for menu exit, camera return, and new rail settling in that order', () => {
+test('detail switch waits for menu exit and new presentation without returning to the archive', () => {
   const f = fixture();
   f.openDetail();
   f.events.length = 0;
   f.motion.select({ index: 4 }, true);
-  assert.equal(f.motion.phase, 'hiding');
-  f.ready.archive = true; // Even a stale ready flag cannot bypass the menu exit.
+  assert.equal(f.motion.phase, 'switch-hiding');
+  f.ready.presentation = true; // Even a stale ready flag cannot bypass the menu exit.
   f.motion.update();
   assert.deepEqual(f.events, ['menu:hide']);
   f.finishMenu();
-  assert.deepEqual(f.events, ['menu:hide', 'mode:archive', 'camera:return']);
+  assert.deepEqual(f.events, ['menu:hide', { switchDetail: { index: 4 } }, 'menu:prepare']);
+  assert.equal(f.motion.phase, 'switching');
+  assert.equal(f.motion.openingOrDetail, true);
   f.motion.update();
-  assert.deepEqual(f.selections(), [], 'Do not switch the card while the camera is returning');
+  assert.equal(f.motion.phase, 'switching', 'Wait for the new camera/album presentation');
+  assert.ok(!f.events.includes('menu:show'));
+  f.ready.presentation = true;
+  f.motion.update();
+  assert.equal(f.motion.phase, 'detail');
+  assert.equal(f.events.at(-1), 'menu:show');
+  assert.deepEqual(f.selections(), [], 'Archive selection must not interrupt the detail camera');
+  assert.ok(!f.events.some((event) => ['mode:archive', 'camera:return', 'camera:enter', 'browse:hide', 'browse:show'].includes(event)));
+});
+
+for (const startingPhase of ['detail', 'opening', 'switch-hiding', 'switching']) {
+  test(`search from ${startingPhase} returns to the archive, settles its selection, then reopens`, () => {
+    const f = fixture();
+    if (startingPhase === 'opening') f.motion.open();
+    else f.openDetail();
+    if (startingPhase === 'switch-hiding' || startingPhase === 'switching') {
+      f.motion.select({ index: 1 }, true);
+      if (startingPhase === 'switching') f.finishMenu();
+    }
+    f.events.length = 0;
+    const target = { index: 8, route: 'archive' };
+    f.motion.select(target, true);
+    assert.equal(f.menuExits.length, 1, 'Reuse an existing text exit rather than starting a second one');
+    if (startingPhase === 'opening') f.finishBrowse(); // Obsolete first-opening callback.
+    f.ready.presentation = true;
+    f.motion.update();
+    assert.deepEqual(f.detailSelections(), [], 'Search must not use the accelerated detail rail');
+    assert.deepEqual(f.selections(), [], 'Keep the target pending while text leaves');
+    f.finishMenu();
+    assert.equal(f.motion.phase, 'returning');
+    assert.ok(f.events.includes('camera:return'));
+    f.ports.archiveInteractive = () => true;
+    f.motion.update();
+    assert.deepEqual(f.selections(), [], 'Search must wait for full archive readiness, not just interactivity');
+    f.ready.archive = true;
+    f.motion.update();
+    assert.equal(f.motion.phase, 'selecting');
+    assert.deepEqual(f.selections(), [target]);
+    f.motion.update();
+    assert.equal(f.motion.phase, 'selecting', 'Do not open before the new row and lane settle');
+    f.ready.archive = true;
+    f.motion.update();
+    assert.equal(f.motion.phase, 'opening');
+    assert.equal(f.events.filter((event) => event === 'camera:enter').length, 1);
+    f.finishBrowse();
+    f.ready.presentation = true;
+    f.motion.update();
+    assert.equal(f.motion.phase, 'detail');
+    assert.deepEqual(f.detailSelections(), []);
+    assert.equal(f.events.at(-1), 'menu:show');
+  });
+}
+
+test('search replacements during exit, return and row movement preserve the latest destination', () => {
+  const f = fixture();
+  f.openDetail();
+  f.events.length = 0;
+  f.motion.select({ index: 2, route: 'archive' }, true);
+  f.motion.select({ index: 3, route: 'archive' }, true);
+  assert.equal(f.menuExits.length, 1);
+  f.finishMenu();
+  const duringReturn = { index: 4, route: 'archive' };
+  f.motion.select(duringReturn, true);
   f.ready.archive = true;
   f.motion.update();
-  assert.deepEqual(f.selections(), [{ index: 4 }]);
-  assert.equal(f.motion.phase, 'selecting');
+  const duringSelection = { index: 6, route: 'archive' };
+  f.motion.select(duringSelection, true);
+  f.ready.archive = true;
   f.motion.update();
-  assert.ok(!f.events.includes('camera:enter'), 'Wait for the selected rail before opening again');
+  assert.deepEqual(f.selections(), [duringReturn, duringSelection]);
+  assert.deepEqual(f.detailSelections(), []);
+  assert.ok(!f.events.includes('camera:enter'), 'Do not briefly open an obsolete search destination');
   f.ready.archive = true;
   f.motion.update();
   assert.equal(f.motion.phase, 'opening');
-  f.finishBrowse();
-  f.ready.presentation = true;
+  assert.equal(f.events.filter((event) => event === 'camera:return').length, 1);
+  assert.equal(f.events.filter((event) => event === 'camera:enter').length, 1);
+});
+
+for (const cancelPhase of ['hiding', 'returning', 'selecting']) {
+  test(`back during search ${cancelPhase} cancels reopening`, () => {
+    const f = fixture();
+    f.openDetail();
+    f.events.length = 0;
+    f.motion.select({ index: 5, route: 'archive' }, true);
+    if (cancelPhase !== 'hiding') f.finishMenu();
+    if (cancelPhase === 'selecting') {
+      f.ready.archive = true;
+      f.motion.update();
+    }
+    assert.equal(f.motion.phase, cancelPhase);
+    f.motion.back();
+    if (cancelPhase === 'hiding') f.finishMenu();
+    f.ready.archive = true;
+    f.motion.update();
+    assert.equal(f.motion.phase, 'archive');
+    assert.equal(f.motion.pendingSelection, undefined);
+    assert.equal(f.motion.openingOrDetail, false);
+    assert.ok(!f.events.includes('camera:enter'));
+    assert.deepEqual(f.detailSelections(), []);
+    assert.equal(f.selections().length, cancelPhase === 'selecting' ? 1 : 0);
+  });
+}
+
+test('reduced-motion search preserves archive selection and reopen ordering', () => {
+  const f = fixture({ reduced: true });
+  f.openDetail();
+  f.events.length = 0;
+  const target = { index: 2, route: 'archive' };
+  f.motion.select(target, true);
+  assert.equal(f.motion.phase, 'returning');
   f.motion.update();
-  assert.equal(f.events.at(-1), 'menu:show');
-  assert.ok(f.events.indexOf('menu:hide') < f.events.indexOf('camera:return'));
-  assert.ok(f.events.indexOf('camera:return') < f.events.findIndex((event) => typeof event === 'object'));
+  assert.equal(f.motion.phase, 'selecting');
+  f.motion.update();
+  assert.equal(f.motion.phase, 'opening');
+  f.motion.update();
+  assert.equal(f.motion.phase, 'detail');
+  assert.deepEqual(f.events, [
+    'menu:hide', 'mode:archive', 'camera:return', { select: target },
+    'mode:detail', 'menu:prepare', 'browse:hide', 'camera:enter', 'menu:show',
+  ]);
 });
 
 test('rapid requests retain the latest selection and its navigation intent', () => {
@@ -126,37 +239,45 @@ test('rapid requests retain the latest selection and its navigation intent', () 
   f.motion.select({ index: 2 }, true);
   assert.equal(f.menuExits.length, 1, 'Rapid input must not restart the menu exit');
   f.finishMenu();
+  assert.deepEqual(f.detailSelections(), [{ index: 2 }]);
   const final = { index: 9, navigation: { axis: 'lane', direction: -1 } };
   f.motion.select(final, true);
   assert.deepEqual(f.motion.pendingSelection, final);
+  f.ready.presentation = true; // This readiness belongs to the superseded target.
   f.motion.update();
   assert.deepEqual(f.selections(), []);
-  f.ready.archive = true;
-  f.motion.update();
-  assert.deepEqual(f.selections(), [final]);
+  assert.deepEqual(f.detailSelections(), [{ index: 2 }, final]);
+  assert.equal(f.motion.phase, 'switching');
+  assert.equal(f.events.filter((event) => event === 'menu:show').length, 1, 'Do not reveal a target committed on the same frame');
   f.motion.select({ index: 10 }, true);
   f.motion.select({ index: 12 }, false);
+  assert.equal(f.motion.phase, 'hiding');
+  f.finishMenu();
   f.ready.archive = true;
   f.motion.update();
-  assert.deepEqual(f.selections(), [final, { index: 12 }]);
+  assert.deepEqual(f.detailSelections(), [{ index: 2 }, final], 'A pending detail target is replaced by archive selection');
+  assert.deepEqual(f.selections(), [{ index: 12 }]);
   f.ready.archive = true;
   f.motion.update();
   assert.equal(f.motion.phase, 'archive');
   assert.equal(f.events.at(-1), 'browse:show');
 });
 
-test('back cancels pending selection and a requested reopen while returning', () => {
+test('back during text exit cancels the pending detail switch and returns once', () => {
   const f = fixture();
   f.openDetail();
   f.motion.select({ index: 3 }, true);
   f.motion.back();
   assert.equal(f.motion.pendingSelection, undefined);
+  assert.equal(f.menuExits.length, 1, 'Back must reuse the in-flight text exit');
   f.finishMenu();
   f.ready.archive = true;
   f.motion.update();
   assert.equal(f.motion.phase, 'archive');
   assert.deepEqual(f.selections(), []);
+  assert.deepEqual(f.detailSelections(), []);
   assert.equal(f.events.filter((event) => event === 'camera:enter').length, 1);
+  assert.equal(f.events.filter((event) => event === 'camera:return').length, 1);
 });
 
 test('latest back during a committed rail movement settles into browsing', () => {
@@ -191,6 +312,7 @@ test('skip/replay handoff cannot use an old browse exit to reveal the new menu',
   const f = fixture();
   f.motion.open();
   f.motion.reset();
+  f.ready.archive = true; // The replacement scene has completed its skip/replay handoff.
   f.motion.open();
   f.ready.presentation = true;
   f.finishBrowse(); // Completion from before reset.
@@ -226,12 +348,11 @@ test('reduced-motion synchronous callbacks preserve ordering and never deadlock'
   f.openDetail();
   f.events.length = 0;
   f.motion.select({ index: 2 }, true);
-  assert.equal(f.motion.phase, 'returning');
-  for (let frame = 0; frame < 3; frame++) f.motion.update();
+  assert.equal(f.motion.phase, 'switching');
+  f.motion.update();
   assert.equal(f.motion.phase, 'detail');
   assert.deepEqual(f.events, [
-    'menu:hide', 'mode:archive', 'camera:return', { select: { index: 2 } },
-    'mode:detail', 'menu:prepare', 'browse:hide', 'camera:enter', 'menu:show',
+    'menu:hide', { switchDetail: { index: 2 } }, 'menu:prepare', 'menu:show',
   ]);
   f.motion.back();
   f.motion.update();
@@ -285,7 +406,7 @@ function animationElement(hidden = false) {
   return element;
 }
 
-test('production menu transition moves right and fades before returning the camera', async (t) => {
+test('production menu transition moves right and fades before switching the detail album', async (t) => {
   const originalComputedStyle = globalThis.getComputedStyle;
   globalThis.getComputedStyle = (element) => element;
   t.after(() => { globalThis.getComputedStyle = originalComputedStyle; });
@@ -302,12 +423,15 @@ test('production menu transition moves right and fades before returning the came
   assert.match(destination, /^translateX\([\d.]+px\)$/);
   assert.ok(Number(destination.match(/[\d.]+/)[0]) > 0, 'Exit moves toward screen right');
   assert.ok(!f.events.includes('camera:return'));
+  assert.deepEqual(f.detailSelections(), [], 'Do not move the album before its text exits');
   transition.finish();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(root.hidden, true);
-  assert.equal(f.motion.phase, 'returning');
-  assert.equal(f.events.at(-1), 'camera:return');
+  assert.equal(f.motion.phase, 'switching');
+  assert.deepEqual(f.detailSelections(), [{ index: 6 }]);
+  assert.equal(f.events.at(-1), 'menu:prepare');
+  assert.ok(!f.events.includes('camera:return'));
 });
 
 test('production transition cancellation cannot complete an obsolete exit', async (t) => {

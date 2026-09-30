@@ -13,6 +13,9 @@ export class SurfaceTransition {
     private exitDuration = 200,
     private direction: "up" | "right" = "up",
     private enterEasing = enterEase,
+    // Separate overlays can fade together without changing their common
+    // ancestor's stacking context or flattening them into a full-screen layer.
+    private fadeTargets: readonly HTMLElement[] = [root],
   ) {}
 
   show(reduced: boolean) {
@@ -36,7 +39,9 @@ export class SurfaceTransition {
   private run(show: boolean, reduced: boolean, finished?: () => void) {
     const revision = ++this.revision;
     const hidden = this.root.hidden;
-    const opacity = hidden ? "0" : getComputedStyle(this.root).opacity;
+    const opacities = this.fadeTargets.map((target) =>
+      hidden ? "0" : getComputedStyle(target).opacity,
+    );
     const transform = this.panel
       ? hidden
         ? this.direction === "right" ? "translateX(36px)" : "translateY(12px)"
@@ -63,11 +68,11 @@ export class SurfaceTransition {
       easing: show ? this.enterEasing : exitEase,
       fill: "both",
     };
-    const fade = this.root.animate(
-      [{ opacity }, { opacity: show ? 1 : 0 }],
+    const fades = this.fadeTargets.map((target, index) => target.animate(
+      [{ opacity: opacities[index] }, { opacity: show ? 1 : 0 }],
       options,
-    );
-    this.animations.push(fade);
+    ));
+    this.animations.push(...fades);
     if (this.panel) {
       this.animations.push(
         this.panel.animate(
@@ -81,7 +86,7 @@ export class SurfaceTransition {
         ),
       );
     }
-    void fade.finished.then(complete).catch(() => {});
+    void Promise.all(fades.map((fade) => fade.finished)).then(complete).catch(() => {});
   }
 }
 

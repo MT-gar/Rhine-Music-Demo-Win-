@@ -51,15 +51,20 @@ assert.ok(a.shader.fragmentShader.includes('vMusicLocal.x - musicShellBounds.x')
 const localAim = a.light.spot.target.position.clone().sub(a.model.position);
 assert.ok(localAim.x>shellBounds.min.x && localAim.x<shellBounds.min.x+0.3,'Spot target tracks the thin left glass frame');
 assert.ok(localAim.y>shellBounds.min.y && localAim.y<shellBounds.max.y,'Spot target remains inside the actual case height');
-// Exercise the guard on a real unlit print shader: even an accidental shade()
-// call must preserve image colour, uniforms and shader code exactly.
+// Prints receive diffuse light through their own path, never the shell glow.
 const print = createAlbumPrintMaterial(new THREE.Texture());
-const printShader = { uniforms: {...THREE.ShaderLib.basic.uniforms}, vertexShader: THREE.ShaderLib.basic.vertexShader, fragmentShader: THREE.ShaderLib.basic.fragmentShader };
+const printShader = { uniforms: {...THREE.ShaderLib.lambert.uniforms}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
 const beforePrint = { uniforms: {...printShader.uniforms}, vertexShader: printShader.vertexShader, fragmentShader: printShader.fragmentShader };
 a.light.shade(printShader,'Album_Print');
 assert.deepEqual(printShader,beforePrint,'Album artwork receives no glow, tint, transmission or shell-light shader injection');
-assert.equal(print.toneMapped,false,'Artwork remains outside the exposure/tone mapping of the shell');
-assert.equal(print.fog,false,'Atmosphere does not wash out the cover texture');
+assert.equal(print.isMeshLambertMaterial,true,'Printed artwork receives diffuse illumination');
+assert.equal(print.emissive.getHex(),0,'Printed artwork has no emissive floor');
+assert.equal(print.toneMapped,false,'Artwork adds no separate exposure response');
+assert.equal(print.fog,true,'Distant prints recede with the archive atmosphere');
+a.light.shadePrint(printShader);
+assert.equal(printShader.uniforms.musicPrintLightColumn,a.shader.uniforms.musicLightColumn,'Covers follow the same continuous light position as the shell');
+assert.ok(printShader.vertexShader.includes('instanceMatrix * musicPrintOrigin'),'Instanced and extracted covers evaluate light in the same world coordinates');
+assert.ok(printShader.fragmentShader.includes('outgoingLight *= mix(musicPrintAmbient, 1.0, printLight)'),'The print field only attenuates real diffuse illumination');
 const poolBounds = new THREE.Box3();
 const focus = {lane:2,row:12};
 for(let index=0;index<LOOP_COLUMNS*LOOP_ROWS;index++) {

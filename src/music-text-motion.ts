@@ -24,7 +24,26 @@ export function setupMusicTextMotion(root: HTMLElement) {
     element.classList.add(`music-rolling-${kind}`);
     return element;
   };
-  const motion = { duration: 460, motionBlur: false, animated: false };
+  const motion = {
+    duration: 460,
+    motionBlur: false,
+    animated: false,
+    // Hidden browse text is prepared before the camera finishes its return.
+    pauseOffscreen: false,
+  };
+  const pendingWraps = new Set<() => () => void>();
+  let wrappingFrame = 0;
+  const flushWrapping = () => {
+    wrappingFrame = 0;
+    // Read both metadata blocks before changing either reel's DOM/display.
+    const commits = [...pendingWraps].map((read) => read());
+    pendingWraps.clear();
+    commits.forEach((commit) => commit());
+  };
+  const queueWrapping = (read: () => () => void) => {
+    pendingWraps.add(read);
+    if (!wrappingFrame) wrappingFrame = requestAnimationFrame(flushWrapping);
+  };
   const number = (id: string, digits = 2) =>
     createRollingNumber(host(id, "number"), {
       ...motion,
@@ -49,6 +68,7 @@ export function setupMusicTextMotion(root: HTMLElement) {
     const measure = document.createElement("span");
     reel.className = "music-rolling-text music-inline-reel";
     plain.className = "music-inline-plain";
+    plain.style.display = "none";
     plain.style.whiteSpace = "normal";
     plain.style.overflowWrap = "anywhere";
     measure.setAttribute("aria-hidden", "true");
@@ -65,55 +85,66 @@ export function setupMusicTextMotion(root: HTMLElement) {
     let value = "",
       animated = false,
       usingReel = true,
-      scheduled = 0,
+      measured = false,
       disposed = false;
-    const reconcile = () => {
-      if (scheduled) cancelAnimationFrame(scheduled);
-      scheduled = 0;
-      if (disposed) return;
+    const readLayout = () => {
+      if (disposed) return () => {};
       const style = getComputedStyle(element);
       const available =
         element.clientWidth -
         Number.parseFloat(style.paddingLeft) -
         Number.parseFloat(style.paddingRight);
       const fits = available > 0 && measure.scrollWidth <= available;
-      const previouslyUsingReel = usingReel;
-      usingReel = fits;
-      // Inline display overrides the library's .rn-root rule while hidden.
-      reel.style.display = fits ? "inline-block" : "none";
-      plain.style.display = fits ? "none" : "inline";
-      controller.update({
-        text: value,
-        animated: animated && fits && previouslyUsingReel,
-      });
-      if (fits && !previouslyUsingReel) controller.update({ animated });
+      return () => {
+        const previouslyUsingReel = usingReel;
+        usingReel = fits;
+        if (!measured || fits !== previouslyUsingReel) {
+          // Inline display overrides the library's .rn-root rule while hidden.
+          reel.style.display = fits ? "inline-block" : "none";
+          plain.style.display = fits ? "none" : "inline";
+        }
+        measured = true;
+        controller.update({
+          text: value,
+          animated: animated && fits && previouslyUsingReel,
+        });
+        if (fits && !previouslyUsingReel) controller.update({ animated });
+      };
     };
     const schedule = () => {
-      if (!disposed && !scheduled) scheduled = requestAnimationFrame(reconcile);
+      if (!disposed) queueWrapping(readLayout);
     };
     const resize = new ResizeObserver(schedule);
     resize.observe(element);
+    document.fonts.addEventListener("loadingdone", schedule);
     void document.fonts.ready.then(schedule);
     return {
       update(options: { text?: string; animated?: boolean }) {
+        let changedText = false;
         if (options.text !== undefined && options.text !== value) {
+          changedText = true;
           value = options.text;
           element.title = value;
           plain.textContent = value;
           measure.textContent = value;
         }
+        const changedMotion =
+          options.animated !== undefined && options.animated !== animated;
         if (options.animated !== undefined) animated = options.animated;
-        reconcile();
+        if (changedText || !measured) schedule();
+        // Enabling the already measured current text needs no geometry reads.
+        else if (changedMotion)
+          controller.update({ animated: animated && usingReel });
       },
       finish() {
         animated = false;
         controller.update({ animated: false });
-        controller.finish();
       },
       destroy() {
         disposed = true;
         resize.disconnect();
-        cancelAnimationFrame(scheduled);
+        document.fonts.removeEventListener("loadingdone", schedule);
+        pendingWraps.delete(readLayout);
         controller.destroy();
         element.textContent = value;
       },
@@ -141,7 +172,6 @@ export function setupMusicTextMotion(root: HTMLElement) {
     // Prepare the current glyphs before the next input, so the first selection
     // after entering the archive animates just like subsequent selections.
     controllers.forEach((controller) => controller.update({ animated: next }));
-    if (!next) controllers.forEach((controller) => controller.finish());
   };
   return {
     setEnabled,
@@ -172,15 +202,19 @@ export function setupMusicTextMotion(root: HTMLElement) {
         value: value.genreIndex,
         direction: axis === "lane" ? direction : "auto",
       });
-      numbers.genresTotal.update({ value: value.genresTotal, direction: "auto" });
+      numbers.genresTotal.update({
+        value: value.genresTotal,
+        direction: "auto",
+      });
       for (const key of Object.keys(texts) as (keyof typeof texts)[])
         texts[key].update({ text: value[key] });
     },
     finish() {
       setEnabled(false);
-      controllers.forEach((controller) => controller.finish());
     },
     destroy() {
+      cancelAnimationFrame(wrappingFrame);
+      pendingWraps.clear();
       controllers.forEach((controller) => controller.destroy());
     },
   };

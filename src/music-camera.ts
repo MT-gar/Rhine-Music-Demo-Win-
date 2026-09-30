@@ -23,7 +23,7 @@ export function musicCinematicPose(shot: number, arrayYaw = 59, arrayElevation =
 }
 
 export type MusicPresentationPhase = "hidden" | "returning-array" | "archive" |
-  "centering-front" | "placing" | "presented" | "returning-center";
+  "placing" | "presented" | "returning-center";
 
 type ArchiveTracks = "rail" | "column" | "shoulder" | "lane";
 export function musicArchiveTracksSettled(
@@ -33,7 +33,7 @@ export function musicArchiveTracksSettled(
     Math.abs(tracks[key].value - targets[key]) < 0.008 && Math.abs(tracks[key].velocity) < 0.025);
 }
 
-/** Symmetric entry/return pans preserve position, velocity and acceleration. */
+/** One entry/return progress drives lift, viewing angle and placement together. */
 export class MusicPlacementMotion {
   value = 0;
   velocity = 0;
@@ -79,7 +79,7 @@ export class MusicPlacementMotion {
   }
 }
 
-/** Overlap the turn and placement; reveal the menu only after both settle. */
+/** Present in one movement; only a manually rotated box needs an alignment hold. */
 export class MusicPresentation {
   phase: MusicPresentationPhase = "hidden";
   private settledFor = 0;
@@ -88,7 +88,7 @@ export class MusicPresentation {
     const previous = this.phase;
     if (mode === "hidden") this.phase = "hidden";
     else if (mode === "detail") {
-      if (this.phase !== "placing" && this.phase !== "presented") this.phase = "centering-front";
+      if (this.phase !== "placing" && this.phase !== "presented") this.phase = "placing";
     } else if (this.phase !== "archive" && this.phase !== "returning-array") {
       this.phase = this.phase === "hidden" ? "returning-array" : "returning-center";
     }
@@ -98,30 +98,27 @@ export class MusicPresentation {
   selectionChanged() {
     // Browsing may keep accepting selections; only the readiness used to open
     // the next album is invalidated. Never reset the moving tracks or speeds.
-    if (this.phase === "archive" || this.phase === "returning-array") {
+    if (this.phase === "placing" || this.phase === "presented") {
+      // Moving between albums keeps the inspection pose. Readiness must wait
+      // for the newly selected box and rail, without replaying placement.
+      this.phase = "placing";
+      this.settledFor = 0;
+    } else if (this.phase === "archive" || this.phase === "returning-array") {
       this.phase = "returning-array";
       this.settledFor = 0;
     }
   }
 
   get holdsDetail() {
-    return this.phase === "centering-front" || this.phase === "placing" ||
+    return this.phase === "placing" ||
       this.phase === "presented" || this.phase === "returning-center";
   }
   get placed() { return this.phase === "placing" || this.phase === "presented"; }
 
-  overlapPlacement(turnProgress: number, liftProgress: number) {
-    // Begin the gentle pan before the turn finishes, once the box is clear.
-    if (this.phase === "centering-front" && turnProgress >= 0.65 && liftProgress >= 0.8) {
-      this.phase = "placing";
-      this.settledFor = 0;
-    }
-  }
-
-  overlapReturn(placementProgress: number, aligned: boolean) {
-    // Mirror entry: the trailing 35% of centering overlaps the next movement.
-    // Manual inspection rotation must be aligned before the box may descend.
-    if (this.phase === "returning-center" && placementProgress <= 0.35 && aligned) {
+  returnWhenAligned(aligned: boolean) {
+    // Without manual rotation, all tracks reverse on the first return frame.
+    // A rotated box stays clear of its neighbors until it faces its slot again.
+    if (this.phase === "returning-center" && aligned) {
       this.phase = "returning-array";
       this.settledFor = 0;
     }
@@ -131,9 +128,7 @@ export class MusicPresentation {
     this.settledFor = cameraSettled && liftSettled ? this.settledFor + Math.max(0, dt) : 0;
     if (!cameraSettled || !liftSettled || (!reduced && this.settledFor < 0.08)) return;
     const previous = this.phase;
-    if (this.phase === "centering-front") this.phase = "placing";
-    else if (this.phase === "placing") this.phase = "presented";
-    else if (this.phase === "returning-center") this.phase = "returning-array";
+    if (this.phase === "placing") this.phase = "presented";
     else if (this.phase === "returning-array") this.phase = "archive";
     if (previous !== this.phase) this.settledFor = 0;
   }

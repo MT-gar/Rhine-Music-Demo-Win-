@@ -1,4 +1,4 @@
-# 本地音乐服务 · V0.1.0（macOS）
+# 本地音乐服务 · V0.2.0（macOS）
 
 `node scripts/music-server.mjs` 同时提供 `dist/` 界面和本地音乐 API。默认仅监听 `127.0.0.1:5173`；端口可通过 `--port 5174` 或 `PORT` 指定。修改前端后重新构建并刷新。服务保持运行期间可编辑本地流派规则，下一次读取曲库就会生效。
 
@@ -46,9 +46,11 @@ API 只能通过已索引的 ID 读取歌曲和封面，不能传入任意文件
 
 本地读取 FLAC、WAV、M4A、DSF、DFF 等元数据。M4A 是容器，界面应同时展示 codec，不能把所有 M4A 标为无损 ALAC。`lossless` 反映解析器辨认出的无损/有损编码。位深、采样率、码率按解析结果显示，缺失时显示未知；AAC 的位深是解码输出位深，不代表原始无损精度。`localNote` 单独保存本地 comment；它绝不映射到专辑介绍 `description`。
 
-DSF/DFF 在索引中明确 `browserPlayable: false`；浏览器不具备本版本的 DSD 解码/直出路径。其他标为可尝试播放的格式仍取决于实际浏览器支持，尤其 ALAC。代码中保留的 Beefweb 代理属于历史实验接口，不作为 V0.1.0 的受支持播放方式；当前版本未接入外部播放器或 DAC/DSD 输出。
+DSF/DFF 在索引中明确 `browserPlayable: false`；浏览器不具备本版本的 DSD 解码/直出路径。其他标为可尝试播放的格式仍取决于实际浏览器支持，尤其 ALAC。代码中保留的 Beefweb 代理属于历史实验接口，不作为 V0.2.0 的受支持播放方式；当前版本未接入外部播放器或 DAC/DSD 输出。
 
 氛围配乐与歌曲分别使用独立音量。`MusicPlayer` 构造参数 `bgmVolume` 默认为 `0.18`，`setBgmVolume(0…1)` 和 `setBgmEnabled` 控制配乐，`setVolume` 仅控制歌曲。播放歌曲前配乐约 220ms 淡出至静音；停止歌曲回到浏览时按配乐自身音量约 650ms 淡入。暂停歌曲保持安静，歌曲连续播放之间不插入配乐。BGM 文件 `/audio/atmosphere.ogg` 由本地服务以 `audio/ogg` 提供。
+
+V0.2.0 的 `songFadeEnabled` 默认 `true`，界面偏好中的已有选择仍优先。开启时切歌先以约 450ms 淡出正在播放的曲目，再切换音源并以约 450ms 淡入；不混播两首歌曲。关闭后恢复直接切歌。曲目操作代次负责使被新选择、暂停或停止打断的旧异步请求失效，歌曲淡变与 BGM 淡变分别管理。
 
 ## 可选 MusicBrainz
 
@@ -62,7 +64,7 @@ MUSICBRAINZ_CONTACT='your-project-contact' node scripts/music-server.mjs
 
 通过 MusicBrainz 补全时，专辑介绍只在高置信匹配后，跟随 release-group 关联的 Wikidata/Wikipedia 链接获取百科导言。优先中文，其次英文；该流程不进行仅按标题的百科搜索，不把 MusicBrainz 编辑注释当介绍。`descriptionSource` 保存来源名称、链接、更新时间与许可说明。没有关联、存在消歧义或网络失败时保留空介绍并提供状态；原有缓存不被无结果覆盖。设置页的独立介绍更新流程见下文。
 
-制作人来源和角色保留，录音级制作人附参与曲目。流派来自 release/release-group 的 `genres`，不把任意 `tags` 当成流派。制作关系属于 CC0 核心数据；流派关联属于 MusicBrainz CC BY-NC-SA 3.0 补充数据。当前项目仅本地个人使用，未来公开分发缓存需重新审查许可。
+制作人来源和角色保留，录音级制作人附参与曲目。流派来自 release/release-group 的 `genres`，不把任意 `tags` 当成流派。MusicBrainz 核心数据与补充数据分别受 CC0 和 CC BY-NC-SA 3.0 约束；保存来源时保留相应许可。公开发布的是播放器代码，个人曲库及在线资料缓存不随仓库和 ZIP 分发，不将这些数据统一重授 MIT；详见 [NOTICE](../NOTICE.md)。
 
 参考：[MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API)、[速率与 User-Agent](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting)、[数据库许可](https://musicbrainz.org/doc/MusicBrainz_Database)、[Wikidata 访问](https://www.wikidata.org/wiki/Help:Data_access)、[百科导言 API](https://www.mediawiki.org/wiki/Extension:TextExtracts)、[music-metadata](https://github.com/Borewit/music-metadata)。
 
@@ -78,11 +80,11 @@ MUSICBRAINZ_CONTACT='your-project-contact' node scripts/music-server.mjs
 
 默认复用已有介绍与最近 7 天的未匹配结果；`force:true` 强制重新查询，但依旧保留可用旧文本直到获取新的可靠结果。失败可重试，批量请求自动合并，进度与界面/三维动画解耦。介绍与匹配状态缓存在 `library-index.json`，重启与扫描保留。
 
-历史验证记录（2026-09-09）：真实 API 请求曾出现连接超时，未取得新介绍；网络失败不会标成没有资料。V0.1.0 发布时未重新验证线上接口的可达性和覆盖率；本地浏览与播放不依赖查询成功。
+历史验证记录（2026-09-09）：真实 API 请求曾出现连接超时，未取得新介绍；网络失败不会标成没有资料。V0.1.0 及本次 V0.2.0 发布检查均未重新验证线上接口的资料覆盖率；本地浏览与播放不依赖查询成功。
 
 ## 开发检查说明
 
-以下说明既有检查脚本的用途，不表示这些脚本在 V0.1.0 发布时全部重新运行；本次检查范围见 [发布检查](RELEASE-V0.1.0.md)。
+以下说明既有检查脚本的用途，不表示这些脚本在 V0.2.0 发布时全部重新运行；本次检查范围见 [发布检查](RELEASE-V0.2.0.md)。
 
 `node --test scripts/check-music-library.mjs` 使用临时合成 WAV 和元数据 fixture，验证实际 WAV 解析、字节范围、增删与断盘保留、缓存、封面优先、人工覆盖、并发扫描和含糊匹配。测试不会读取或改写用户歌曲。
 
