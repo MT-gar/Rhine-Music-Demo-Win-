@@ -1,7 +1,7 @@
 {
   "capturedAt": "2026-09-30",
   "sourceCommit": "09005ba680df3904941fb615c48651f8c4833696",
-  "source": "V0.2.0 production build, built-in demo covers, isolated empty music data directory",
+  "source": "V0.2.0 production build, built-in demo covers, isolated data directories; title-layout.gif uses a synthetic layout-demo library described in its dataSource field",
   "viewport": [
     1280,
     720
@@ -125,6 +125,65 @@
       "durationSeconds": 5.6,
       "bytes": 2064970,
       "sha256": "7f3222775ce922f578d2dabd04298b7f0f1f964d6c14b8cb9589aa1226a5a2f0"
+    },
+    {
+      "file": "title-layout.gif",
+      "capturedAt": "2026-09-30",
+      "sourceCommit": "09005ba680df3904941fb615c48651f8c4833696",
+      "dataSource": "Isolated synthetic library: two 1-second silent FLAC files with layout-demo album tags; cover copied unchanged from public/demo-covers/square.png. No private library.",
+      "sourceViewport": [
+        1280,
+        720
+      ],
+      "sourceFrames": 90,
+      "captureDurationMs": 6108,
+      "encodedFps": 15,
+      "paletteColors": 192,
+      "cropXYWH": [
+        765,
+        210,
+        510,
+        330
+      ],
+      "output": [
+        510,
+        330
+      ],
+      "finalHoldMs": 800,
+      "loop": "infinite",
+      "durationSeconds": 6.94,
+      "bytes": 3497755,
+      "sha256": "9806a737f9bebc676cfed0072df2253797cdb02992e33b05a83fdaf3fe474a23",
+      "actions": [
+        {
+          "at": 965,
+          "button": "下一个专辑",
+          "completedAt": 1315
+        },
+        {
+          "at": 4194,
+          "button": "上一个专辑",
+          "completedAt": 4469
+        }
+      ],
+      "states": [
+        {
+          "name": "short",
+          "title": "日光留声",
+          "fontSizePx": 34.56,
+          "titleHeightPx": 40.0859375,
+          "titleWidthPx": 471.046875,
+          "visibleLines": 1
+        },
+        {
+          "name": "long",
+          "title": "在日光消失之前，沿着静默的海岸线继续远行，写给尚未到来的漫长夏天",
+          "fontSizePx": 30.01,
+          "titleHeightPx": 69.6171875,
+          "titleWidthPx": 471.046875,
+          "visibleLines": 2
+        }
+      ]
     }
   ],
   "screenshots": [
