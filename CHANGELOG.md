@@ -2,6 +2,20 @@
 
 本记录区分正式版本、本地开发副本与上游档案终端。早期目录 `RhineLabUI`、`RhineLabUI-Music-v2`、`RhineLabUI-Music-v3` 现统一对应 V0.0.1、V0.0.2、V0.0.3；这些编号不表示补发历史版本，V0.2.0、V0.3.0 是后续独立版本。当前功能与安装方式见 [README](README.md)，当前视觉和交互规则见 [DESIGN](DESIGN.md)。
 
+## V0.3.0 · Windows 适配补丁 · 2026-10-01
+
+V0.3.0 的补丁：不改变界面、交互和数据格式，让同一份代码在 Windows 10 及更新版本上完整运行。新增 `Rhine-Music-Demo-v0.3.0-Windows.zip`（预编译、自带 Node.js 22 LTS）和 `Rhine Music.exe`。
+
+- 新增 `scripts/platform.mjs`，集中处理平台差异：路径规范化和比较（盘符大小写、`\\?\` 前缀、不区分大小写）、完整路径判定（支持 `C:\`、`C:/` 和 `\\server\share`，拒绝 `\dir` 与 `C:dir`）、npm 调用、默认浏览器、系统文件夹忽略和带重试的 rename。
+- 启动器：Windows 下 `npm` 不再按 macOS 方式直接启动（避免 `npm.cmd` 的 ENOENT／EINVAL），以 `npm-cli.js` 加当前 node 运行；浏览器改用 `rundll32 url.dll,FileProtocolHandler`；后台服务隐藏控制台窗口；服务身份比较按 Windows 路径规则，避免盘符大小写或中文路径造成“端口被其他程序占用”的误判。
+- 构建缓存指纹对路径分隔符和 CRLF／LF 保持一致，Windows 检出不会因行尾差异反复重建；新增 `.gitattributes`（源码 LF，`.bat` 和 `.ps1` CRLF）。
+- 预编译包识别：`dist/.music-build.json` 带 `prebuilt: true` 时只检查运行时依赖和界面文件，不需要 npm；包损坏时给出明确提示而不是静默重装。
+- 服务端：Windows 下拒绝含 `:` 的静态路由（NTFS 备用数据流如 `/index.html::$DATA`、盘符路径）；补充 `SIGBREAK`。目录边界、Origin／Host 校验和只读约束不变。
+- 曲库：目录输入容忍引号、按 Windows 规则去重和判断嵌套（`D:\Music` 与 `d:\music\Live`）；原子写入遇到 `EPERM`／`EBUSY`／`EACCES` 时短暂重试；扫描忽略 `$RECYCLE.BIN`、`System Volume Information` 和 exFAT/FAT 盘上的 `._` 文件；无权限的子文件夹不再中断整个扫描。
+- 界面：音乐库输入框的示例路径在 Windows 浏览器中显示 `C:\Users\你的用户名\Music`。
+- 新增 `启动音乐播放器.bat`、`windows/`（exe 源码、清单、图标脚本、使用说明）、`scripts/package-windows.mjs`（打包）、`scripts/check-platform.mjs` 与 `scripts/check-windows-package.mjs`（检查）；`check:music` 现包含平台与启动器检查。macOS 的 `.command` 启动器和行为保持不变。
+- 范围与限制见 [docs/WINDOWS.md](docs/WINDOWS.md)。
+
 ## V0.3.0 · 2026-10-01
 
 基于 V0.2.0 整理的 macOS 源码发行版；主要功能修改与界面回归记录形成于 2026-09-30。发布包为 `Rhine-Music-Demo-v0.3.0-macOS.zip`，解压后的顶层目录为 `V0.3.0/`。

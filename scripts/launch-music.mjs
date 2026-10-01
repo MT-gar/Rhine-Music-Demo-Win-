@@ -4,6 +4,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn, spawnSync } from 'node:child_process'
+import { browserInvocation, canonicalPath, npmInvocation, samePath } from './platform.mjs'
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const SERVICE_ID = 'rhine-local-music'
@@ -39,6 +40,7 @@ function requestJson(port, route) {
 
 // Older running versions have no health endpoint. Verify both their executable
 // script and working directory before using their legacy API as identification.
+// Only macOS shipped such versions, so other platforms never need this probe.
 export function sameLegacyProcess(port, projectDir, run = spawnSync) {
   if (process.platform !== 'darwin') return false
   const output = run('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8' })
@@ -60,7 +62,7 @@ export async function probeMusicService(port, projectDir, { request = requestJso
     return { kind: legacy(port, projectDir) ? 'starting' : 'occupied', port }
   }
   const health = response.body
-  if (response.status === 200 && health?.service === SERVICE_ID && health.projectDir === projectDir && Number.isSafeInteger(health.pid)) return { kind: 'ours', port }
+  if (response.status === 200 && health?.service === SERVICE_ID && typeof health.projectDir === 'string' && samePath(health.projectDir, projectDir) && Number.isSafeInteger(health.pid)) return { kind: 'ours', port }
   if (!legacy(port, projectDir)) return { kind: 'occupied', port }
   try {
     const [config, library] = await Promise.all([request(port, '/api/config'), request(port, '/api/library')])
@@ -82,22 +84,25 @@ export async function choosePort(projectDir, probe = probeMusicService, preferre
 
 async function runNpm(args, projectDir) {
   await new Promise((resolve, reject) => {
-    const child = spawn('npm', args, { cwd: projectDir, stdio: 'inherit' })
+    const npm = npmInvocation(args)
+    const child = spawn(npm.command, npm.args, { cwd: projectDir, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`npm ${args.join(' ')} 未完成（退出码 ${code}）。请查看上方信息后重试。`)))
   })
 }
 
-export async function dependenciesReady(projectDir) {
+// production: only the runtime dependencies are required (prebuilt packages).
+export async function dependenciesReady(projectDir, { production = false } = {}) {
   try {
     const manifest = JSON.parse(await fs.readFile(path.join(projectDir, 'package.json'), 'utf8'))
     const lock = JSON.parse(await fs.readFile(path.join(projectDir, 'package-lock.json'), 'utf8'))
     const installed = JSON.parse(await fs.readFile(path.join(projectDir, 'node_modules/.package-lock.json'), 'utf8'))
-    for (const section of ['dependencies', 'devDependencies']) {
+    const sections = production ? ['dependencies'] : ['dependencies', 'devDependencies']
+    for (const section of sections) {
       const declared = manifest[section] ?? {}, locked = lock.packages?.['']?.[section] ?? {}
       if (Object.keys(declared).length !== Object.keys(locked).length || Object.entries(declared).some(([name, version]) => locked[name] !== version)) return false
     }
-    for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) {
+    for (const name of Object.keys(production ? manifest.dependencies : { ...manifest.dependencies, ...manifest.devDependencies })) {
       const location = `node_modules/${name}`
       // Some dependencies are ESM-only or type declarations with no executable
       // entry point, so require.resolve(name) is not a valid install check.
@@ -106,13 +111,15 @@ export async function dependenciesReady(projectDir) {
       if (!expected || actual.version !== expected || installed.packages?.[location]?.version !== expected) return false
     }
     for (const [location, expected] of Object.entries(lock.packages ?? {})) {
-      if (!location || (!installed.packages?.[location] && expected.optional)) continue
+      if (!location || (!installed.packages?.[location] && expected.optional) || (production && expected.dev)) continue
       if (installed.packages?.[location]?.version !== expected.version || !await exists(path.join(projectDir, location, 'package.json'))) return false
     }
-    if (!await exists(path.join(projectDir, 'node_modules/.bin/vite')) || !await exists(path.join(projectDir, 'node_modules/.bin/tsc'))) return false
+    if (!production && (!await exists(path.join(projectDir, 'node_modules/.bin/vite')) || !await exists(path.join(projectDir, 'node_modules/.bin/tsc')))) return false
     return true
   } catch { return false }
 }
+
+const TEXT_FILE = /\.(?:[cm]?[jt]s|json|css|html|svg|webmanifest|txt|md)$/i
 
 export async function buildFingerprint(projectDir) {
   const hash = createHash('sha256')
@@ -124,8 +131,11 @@ export async function buildFingerprint(projectDir) {
     if (stat.isDirectory()) {
       for (const entry of (await fs.readdir(file)).sort()) await append(path.join(relative, entry))
     } else if (stat.isFile()) {
-      hash.update(relative).update('\0')
-      for await (const chunk of createReadStream(file)) hash.update(chunk)
+      // Separator and line-ending neutral so a Windows checkout (CRLF, backslashes)
+      // fingerprints the same as the original sources.
+      hash.update(relative.split(path.sep).join('/')).update('\0')
+      if (TEXT_FILE.test(file)) hash.update(Buffer.from((await fs.readFile(file, 'utf8')).replace(/\r\n/g, '\n')))
+      else for await (const chunk of createReadStream(file)) hash.update(chunk)
       hash.update('\0')
     }
   }
@@ -133,24 +143,32 @@ export async function buildFingerprint(projectDir) {
   return hash.digest('hex')
 }
 
-async function prepareBuild(projectDir) {
+async function distIntact(projectDir) {
+  const index = path.join(projectDir, 'dist/index.html')
+  if (!await exists(index)) return false
+  const html = await fs.readFile(index, 'utf8')
+  const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"?]+)"/g)].map((match) => match[1])
+  return assets.length > 0 && (await Promise.all(assets.map((asset) => exists(path.join(projectDir, 'dist', asset))))).every(Boolean)
+}
+
+export async function prepareBuild(projectDir) {
   if (!supportedNode(process.versions.node)) throw new Error(`当前 Node.js ${process.versions.node} 不满足要求。请安装 Node.js 22.12 或更新的 LTS 版本。`)
-  if (spawnSync('npm', ['--version'], { stdio: 'ignore' }).status !== 0) throw new Error('没有找到 npm。请重新安装包含 npm 的 Node.js LTS 版本。')
+  const marker = path.join(projectDir, 'dist/.music-build.json')
+  let previous
+  try { previous = JSON.parse(await fs.readFile(marker, 'utf8')) } catch {}
+  // Prebuilt release packages ship dist and runtime dependencies; they need no npm.
+  if (previous?.prebuilt === true) {
+    if (await dependenciesReady(projectDir, { production: true }) && await distIntact(projectDir)) return
+    throw new Error('预编译包文件不完整。请重新解压完整的 Windows 压缩包后再启动。')
+  }
+  const npm = npmInvocation(['--version'])
+  if (spawnSync(npm.command, npm.args, { stdio: 'ignore', windowsHide: true }).status !== 0) throw new Error('没有找到 npm。请重新安装包含 npm 的 Node.js LTS 版本。')
   if (!await dependenciesReady(projectDir)) {
     console.log('首次准备或依赖已更新：正在安装锁定版本的依赖（需要联网）…')
     await runNpm(['ci'], projectDir)
   }
-  const marker = path.join(projectDir, 'dist/.music-build.json')
-  let previous
-  try { previous = JSON.parse(await fs.readFile(marker, 'utf8')) } catch {}
   const fingerprint = await buildFingerprint(projectDir)
-  const index = path.join(projectDir, 'dist/index.html')
-  let complete = previous?.fingerprint === fingerprint && await exists(index)
-  if (complete) {
-    const html = await fs.readFile(index, 'utf8')
-    const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"?]+)"/g)].map((match) => match[1])
-    complete = assets.length > 0 && (await Promise.all(assets.map((asset) => exists(path.join(projectDir, 'dist', asset))))).every(Boolean)
-  }
+  const complete = previous?.fingerprint === fingerprint && await distIntact(projectDir)
   if (!complete) {
     console.log('正在构建播放器界面（完成后下次可直接启动）…')
     await runNpm(['run', 'build'], projectDir)
@@ -195,7 +213,7 @@ async function startServer(projectDir, dataDir, port) {
   let startupError
   try {
     child = spawn(process.execPath, [path.join(projectDir, 'scripts/music-server.mjs'), '--port', String(port)], {
-      cwd: projectDir, detached: true,
+      cwd: projectDir, detached: true, windowsHide: true,
       env: { ...process.env, MUSIC_DATA_DIR: dataDir },
       stdio: ['ignore', log.fd, log.fd],
     })
@@ -216,12 +234,14 @@ async function startServer(projectDir, dataDir, port) {
 }
 
 function openBrowser(url) {
-  const result = spawnSync('/usr/bin/open', [url], { stdio: 'ignore' })
+  if (process.env.RHINE_NO_BROWSER) return console.log(`已按 RHINE_NO_BROWSER 跳过自动打开浏览器：${url}`)
+  const { command, args } = browserInvocation(url)
+  const result = spawnSync(command, args, { stdio: 'ignore', windowsHide: true })
   if (result.status !== 0) console.log(`浏览器未自动打开，请手动访问：${url}`)
 }
 
 export async function launchMusic({ projectDir = PROJECT_DIR, dataDir, probe = probeMusicService, prepare = prepareBuild, start = startServer, open = openBrowser } = {}) {
-  projectDir = await fs.realpath(projectDir)
+  projectDir = canonicalPath(await fs.realpath(projectDir))
   dataDir = path.resolve(projectDir, dataDir ?? process.env.MUSIC_DATA_DIR ?? '../music-data-v3')
   let state = await choosePort(projectDir, probe)
   if (state.kind !== 'ours') {

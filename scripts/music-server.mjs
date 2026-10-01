@@ -3,8 +3,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promises as fs, createReadStream } from 'node:fs'
 import { MusicLibraryStore, safeRootList } from './music-library.mjs'
+import { canonicalPath, isWindows } from './platform.mjs'
 
-const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// Canonical form so the launcher's health probe matches regardless of drive-letter case or junctions.
+const PROJECT_DIR = canonicalPath(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'))
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' }
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
@@ -94,7 +96,8 @@ export async function createMusicServer({
       const url = new URL(request.url, host)
       if (request.headers.origin && request.headers.origin !== host.origin) return json(response, 403, { error: '不接受跨站点访问本地曲库' })
       const route = decodeURIComponent(url.pathname)
-      if (route.includes('\0') || route.includes('\\')) return json(response, 400, { error: '无效路径' })
+      // On Windows ':' would address NTFS alternate data streams (/index.html::$DATA) or other drives.
+      if (route.includes('\0') || route.includes('\\') || (isWindows && route.includes(':'))) return json(response, 400, { error: '无效路径' })
       const get = request.method === 'GET' || request.method === 'HEAD'
       if (route === '/api/health' && get) return json(response, 200, { service: 'rhine-local-music', projectDir: PROJECT_DIR, pid: process.pid })
       if (route === '/api/library' && get) {
@@ -183,4 +186,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const close = () => { server.close(() => process.exit()); server.closeAllConnections() }
   process.once('SIGINT', close)
   process.once('SIGTERM', close)
+  // Ctrl+Break and console close on Windows; SIGTERM is not delivered there.
+  if (isWindows) process.once('SIGBREAK', close)
 }
