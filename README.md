@@ -65,6 +65,10 @@ npm run music -- --port 5175
 
 从源码运行（已安装 Node.js 22.12 或更新的 LTS 版本）：解压源码后双击 `启动音乐播放器.bat`，或在 PowerShell／命令提示符中执行 `npm ci`、`npm run build`、`npm run music -- --port 5175`。需要自行打包时执行 `npm run package:windows`。
 
+## 在线专辑架（Windows 版新增）
+
+顶部「在线」按钮打开在线曲库：搜索 Internet Archive 的公开音频，加入后放进**独立的在线专辑架和独立列表**，不会混入本地音乐库；也可以连接自己搭建的 Subsonic 兼容服务（Navidrome、Jellyfin 等）。只在你搜索、加入或播放时联网，音频和封面由本机服务转发，不下载、不缓存。授权随条目显示，未标注授权的条目会明确提示。详见 [docs/ONLINE-LIBRARY.md](docs/ONLINE-LIBRARY.md)。
+
 ## 可以做什么
 
 | 功能 | 使用方式与效果 |

@@ -2,6 +2,18 @@
 
 本记录区分正式版本、本地开发副本与上游档案终端。早期目录 `RhineLabUI`、`RhineLabUI-Music-v2`、`RhineLabUI-Music-v3` 现统一对应 V0.0.1、V0.0.2、V0.0.3；这些编号不表示补发历史版本，V0.2.0、V0.3.0 是后续独立版本。当前功能与安装方式见 [README](README.md)，当前视觉和交互规则见 [DESIGN](DESIGN.md)。
 
+## V0.3.0 · Windows 适配补丁 · 在线专辑架 · 2026-10-02
+
+在本地音乐库之外新增独立的在线专辑架，不改变本地音乐库、三维专辑架的外观和交互。详见 [docs/ONLINE-LIBRARY.md](docs/ONLINE-LIBRARY.md)。
+
+- 新增顶部「在线」入口和「在线曲库」面板：搜索 Internet Archive 的公开音频，加入后进入独立的「我的在线专辑」列表；点击「在线专辑架」切换到独立的三维专辑架，「本地专辑架」切回。在线专辑不会混入本地索引。
+- 新增 `scripts/online-sources.mjs`：来源接口（搜索、专辑、音频地址、封面地址）、Internet Archive 实现，以及面向自建服务（Navidrome、Jellyfin 的 Subsonic 插件、Airsonic 等）的 Subsonic／OpenSubsonic 客户端（默认关闭，地址与账号在界面填写，只保存在数据目录的 `online.json`）。
+- 新增 `/api/online/*` 接口。音频与封面由本机服务转发并支持 Range，浏览器不直接访问第三方；每个来源有主机白名单，重定向逐跳复查，只放行音频或 JPEG／PNG／GIF／WebP。
+- 条目授权随结果显示（如 CC BY-NC-ND 3.0），未标注授权会明确提示；受限借阅条目不能加入。启动时不联网，只在搜索、加入、播放时访问来源；不下载、不缓存音频。
+- 不包含针对商业音乐平台的播放地址解析器。
+- 点击顶部当前歌名时，若歌曲在另一个专辑架，会自动切换过去再定位。
+- `npm run check:music` 新增 `scripts/check-online-sources.mjs`（10 项，使用本机假服务器，不访问真实互联网）；Windows 包冒烟测试增加在线接口检查（共 10 项）；`package-windows.mjs` 的运行脚本清单加入 `online-sources.mjs`。
+
 ## V0.3.0 · Windows 适配补丁 · 2026-10-01
 
 V0.3.0 的补丁：不改变界面、交互和数据格式，让同一份代码在 Windows 10 及更新版本上完整运行。新增 `Rhine-Music-Demo-v0.3.0-Windows.zip`（预编译、自带 Node.js 22 LTS）和 `Rhine Music.exe`。

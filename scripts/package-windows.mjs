@@ -23,7 +23,7 @@ const STAGING_ROOT = path.join(RELEASE_DIR, '.staging')
 const PACKAGE_DIR_NAME = `V${VERSION}`
 const ZIP_NAME = `Rhine-Music-Demo-v${VERSION}-Windows.zip`
 // Runtime files the music service loads; the front end ships prebuilt in dist/.
-const RUNTIME_SCRIPTS = ['launch-music.mjs', 'music-server.mjs', 'music-library.mjs', 'album-introductions.mjs', 'platform.mjs']
+const RUNTIME_SCRIPTS = ['launch-music.mjs', 'music-server.mjs', 'music-library.mjs', 'album-introductions.mjs', 'online-sources.mjs', 'platform.mjs']
 
 const log = (message) => console.log(`[package-windows] ${message}`)
 const exists = (file) => fs.access(file).then(() => true, () => false)

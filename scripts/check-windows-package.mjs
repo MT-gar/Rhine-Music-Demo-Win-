@@ -76,7 +76,7 @@ try {
   await fs.access(zip)
   const extract = spawnSync(path.join(system32, 'tar.exe'), ['-xf', zip, '-C', base], { encoding: 'utf8' })
   assert.equal(extract.status, 0, extract.stderr)
-  for (const file of ['Rhine Music.exe', '启动音乐播放器.bat', '使用说明-Windows.txt', 'runtime/node.exe', 'dist/index.html', 'dist/.music-build.json', 'scripts/launch-music.mjs', 'node_modules/music-metadata/package.json', 'LICENSE']) await fs.access(path.join(pkg, file))
+  for (const file of ['Rhine Music.exe', '启动音乐播放器.bat', '使用说明-Windows.txt', 'runtime/node.exe', 'dist/index.html', 'dist/.music-build.json', 'scripts/launch-music.mjs', 'scripts/online-sources.mjs', 'node_modules/music-metadata/package.json', 'LICENSE']) await fs.access(path.join(pkg, file))
   const names = new Set(await fs.readdir(pkg))
   for (const unwanted of ['src', 'public', 'AGENTS.md', 'verification', 'reference']) assert.ok(!names.has(unwanted), `包内不应含 ${unwanted}`)
   ok('解压到含中文、空格、括号的目录，文件齐全，且不含源码与开发资料')
@@ -122,6 +122,14 @@ try {
   assert.equal(whole.status, 200)
   assert.equal(whole.headers.get('accept-ranges'), 'bytes')
   ok('音频 Range 请求（拖动进度所需）返回 206，整段返回 200')
+
+  const origin = `http://127.0.0.1:${service.port}`
+  const onlineShelf = await (await fetch(`${origin}/api/online/library`)).json()
+  assert.deepEqual([onlineShelf.albums, onlineShelf.roots], [[], []])
+  const onlineSources = await (await fetch(`${origin}/api/online/sources`)).json()
+  assert.equal(onlineSources.sources.find((source) => source.id === 'subsonic').configured, false)
+  assert.equal((await fetch(`${origin}/api/online/audio/onlinetrack-unknown`)).status, 404)
+  ok('在线专辑架接口可用，默认为空，未配置自有音乐服务（不联网）')
 
   assert.ok(album.coverUrl, '文件夹封面 cover.png 应被识别')
   const artwork = await fetch(`http://127.0.0.1:${service.port}${album.coverUrl}`)
