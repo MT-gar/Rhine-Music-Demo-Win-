@@ -44,12 +44,17 @@ npm run package:windows
 - 扫描忽略 `$RECYCLE.BIN`、`System Volume Information`、`.` 开头的文件夹，以及 `._` 开头的 AppleDouble 文件；无权限读取的子文件夹被跳过，不中断扫描。
 - 服务拒绝带 `:` 的静态路由（NTFS 备用数据流、盘符），并保留原有的反斜杠、`..`、Origin／Host 与只读限制。
 
+## 启动可靠性
+
+- **端口**：默认 5175，被占用时顺延到 5184。Windows 的 Hyper-V、WSL 和 Docker 会保留一段端口，这类端口探测为空闲、监听时却报 `EACCES`；服务启动失败且日志含 `listen EACCES` 或 `listen EADDRINUSE` 时，启动器自动换下一个端口重试，十个端口都不可用才报错。其他启动失败不会被重试。
+- **启动锁**：`music-data-v3\launcher.lock` 记录启动器进程号，并由持有者定时刷新。持有者进程已不存在，或锁超过 30 秒没有刷新（进程号被复用、被结束、断电），后来的启动器会自动接管，不再要求手动删除文件；持有者仍在运行时仍然拒绝第二个启动器。接管通过 `launcher.lock.takeover` 目录互斥，并确认锁仍是刚才判定过期的那一个，两个启动器不会互相删除对方的新锁。
+
 ## 已执行的检查
 
 环境：Windows 11（10.0.26200）、Node.js 24.16.0、npm 11.17.0，Windows 包内运行时为 Node.js 22.23.3。
 
 - 改动前基线：`npm ci`、`npm run build`、`npm run check:music`、`npm run check:content` 均通过；`check-music-launcher.mjs` 中 macOS `.command` 用例在 Windows 失败（该文件不在原 `check:music` 内）。
-- 改动后：`npm run build`（含 `tsc`）通过；`npm run check:music` 通过，其中新增平台与启动器检查 31 项（28 项通过，3 项为 macOS／POSIX 专属用例按平台跳过，没有失败）；`npm run check:content` 18 项通过。
+- 改动后：`npm run build`（含 `tsc`）通过；`npm run check:music` 通过，其中平台与启动器检查 37 项（34 项通过，3 项为 macOS／POSIX 专属用例按平台跳过，没有失败）；`npm run check:content` 18 项通过。
 - Windows 专属自动化用例：`.bat` 在含中文、空格、括号和 `$()` 的目录中切换工作目录、优先使用 `runtime\node.exe`、传递失败退出码、缺少 Node.js 时给出安装提示；预编译包检查；LF／CRLF 指纹一致；路径、npm 调用、重试、扫描忽略和路由拒绝。
 - 源码目录实际启动：通过 `npm run build` 的 Windows 调用路径构建，随后启动服务；再次启动复用同一服务。
 - Windows 包冒烟测试（`check-windows-package.mjs`）9 项全部通过：精简 `PATH` 下 exe 启动成功、后台服务无窗口、中文／空格／括号目录扫描、`._` 与回收站被忽略、音频 Range 返回 206、封面返回 200、前端页面可访问且危险路由返回 400、重复启动复用服务、UNC 路径（含引号）可保存扫描并播放、5175 被占用时顺延到 5176。

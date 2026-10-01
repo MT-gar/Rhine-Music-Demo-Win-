@@ -14,6 +14,8 @@ V0.3.0 的补丁：不改变界面、交互和数据格式，让同一份代码�
 - 曲库：目录输入容忍引号、按 Windows 规则去重和判断嵌套（`D:\Music` 与 `d:\music\Live`）；原子写入遇到 `EPERM`／`EBUSY`／`EACCES` 时短暂重试；扫描忽略 `$RECYCLE.BIN`、`System Volume Information` 和 exFAT/FAT 盘上的 `._` 文件；无权限的子文件夹不再中断整个扫描。
 - 界面：音乐库输入框的示例路径在 Windows 浏览器中显示 `C:\Users\你的用户名\Music`。
 - 新增 `启动音乐播放器.bat`、`windows/`（exe 源码、清单、图标脚本、使用说明）、`scripts/package-windows.mjs`（打包）、`scripts/check-platform.mjs` 与 `scripts/check-windows-package.mjs`（检查）；`check:music` 现包含平台与启动器检查。macOS 的 `.command` 启动器和行为保持不变。
+- 启动器：服务因端口被系统保留（Hyper-V／WSL／Docker 的保留端口段，`listen EACCES`）或刚被占用（`EADDRINUSE`）而无法监听时，自动换用下一个端口，不再直接失败。
+- 启动锁：`launcher.lock` 由持有者定时刷新；持有者进程已消失或锁超过 30 秒没有刷新时，下一次启动自动接管，不再要求手动删除；通过 `.takeover` 目录互斥，两个启动器不会互相删除对方的锁。macOS 同样适用。
 - 范围与限制见 [docs/WINDOWS.md](docs/WINDOWS.md)。
 
 ## V0.3.0 · 2026-10-01

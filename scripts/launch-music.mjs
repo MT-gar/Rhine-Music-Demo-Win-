@@ -71,13 +71,15 @@ export async function probeMusicService(port, projectDir, { request = requestJso
   return { kind: 'starting', port }
 }
 
-export async function choosePort(projectDir, probe = probeMusicService, preferred = 5175) {
+// skip: ports that looked free but could not be bound (reserved by Windows/Hyper-V, or taken a moment ago).
+export async function choosePort(projectDir, probe = probeMusicService, preferred = 5175, skip = new Set()) {
   const ports = [...new Set([...Array.from({ length: 10 }, (_, index) => preferred + index), 5173])]
   const states = await Promise.all(ports.map((port) => probe(port, projectDir)))
   const ours = states.find((state) => state.kind === 'ours')
   if (ours) return ours
   if (states.some((state) => state.kind === 'starting')) throw new Error('本工程的音乐服务正在启动或暂时没有响应。请稍后再双击；启动器没有重启它。')
-  const available = states.find((state) => state.kind === 'free' && state.port !== 5173)
+  const available = states.find((state) => state.kind === 'free' && state.port !== 5173 && !skip.has(state.port))
+  if (!available && skip.size) throw new Error(`端口 ${preferred}–${preferred + 9} 都无法使用：被其他程序占用，或被系统保留（Windows 的 Hyper-V、WSL、Docker 会保留一段端口）。请关闭不需要的程序或重启电脑后重试；启动器不会结束这些进程。`)
   if (!available) throw new Error(`端口 ${preferred}–${preferred + 9} 均被其他程序占用。请关闭不需要的程序后重试；启动器不会结束这些进程。`)
   return available
 }
@@ -176,37 +178,100 @@ export async function prepareBuild(projectDir) {
   }
 }
 
-async function startupLock(dataDir) {
+const LOCK_STALE_MS = 30_000
+const LOCK_HEARTBEAT_MS = 5_000
+const GUARD_STALE_MS = 10_000
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true } catch (error) { return error.code !== 'ESRCH' } }
+
+async function inspectLock(file) {
+  try {
+    const stat = await fs.stat(file)
+    let owner
+    try { owner = JSON.parse(await fs.readFile(file, 'utf8')) } catch {}
+    return { stat, owner }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+// A lock is stale when its owner process is gone, or when nobody has refreshed it
+// for a long time (a crashed or killed launcher whose process id was reused, a
+// power cut). A live launcher refreshes its lock, so a long npm install stays valid.
+function lockState(lock, { alive, now, staleMs }) {
+  const pid = lock.owner?.pid
+  const valid = Number.isSafeInteger(pid) && pid > 0
+  if (valid && !alive(pid)) return 'stale'
+  if (now() - lock.stat.mtimeMs > staleMs) return 'stale'
+  return valid ? 'live' : 'unready'
+}
+
+// Only the holder of the .takeover directory may delete a stale lock, and it deletes
+// it only if it is still the very lock that was judged stale. Two launches that find
+// the same dead lock therefore can never remove each other's new lock.
+async function removeStaleLock(file, expected, now) {
+  const guard = `${file}.takeover`
+  try { await fs.mkdir(guard) } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    const stat = await fs.stat(guard).catch(() => null)
+    // A takeover interrupted half way must not block every later launch.
+    if (stat && now() - stat.mtimeMs <= GUARD_STALE_MS) throw new Error('另一个启动器正在准备播放器，请等待它完成。')
+    await fs.rmdir(guard).catch(() => {})
+    return
+  }
+  try {
+    const current = await inspectLock(file)
+    if (current && current.stat.mtimeMs === expected.stat.mtimeMs && current.owner?.token === expected.owner?.token) await fs.unlink(file)
+  } finally { await fs.rmdir(guard).catch(() => {}) }
+}
+
+export async function startupLock(dataDir, { alive = pidAlive, now = Date.now, staleMs = LOCK_STALE_MS, heartbeatMs = LOCK_HEARTBEAT_MS } = {}) {
   const file = path.join(dataDir, 'launcher.lock')
   const token = randomUUID()
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const handle = await fs.open(file, 'wx')
-      await handle.writeFile(JSON.stringify({ pid: process.pid, token }))
-      await handle.close()
+      try { await handle.writeFile(JSON.stringify({ pid: process.pid, token })) } finally { await handle.close() }
+      const heartbeat = setInterval(() => { const at = new Date(); fs.utimes(file, at, at).catch(() => {}) }, heartbeatMs)
+      heartbeat.unref()
       return async () => {
+        clearInterval(heartbeat)
         try {
           if (JSON.parse(await fs.readFile(file, 'utf8')).token === token) await fs.unlink(file)
         } catch {}
       }
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
-      let pid
-      try { pid = JSON.parse(await fs.readFile(file, 'utf8')).pid } catch {}
-      if (!Number.isSafeInteger(pid) || pid < 1) throw new Error(`启动锁尚未就绪。请稍后再次双击；如果持续出现，可删除 ${file} 后重试。`)
-      try { process.kill(pid, 0) } catch (error) {
-        // Do not race two simultaneous launches to replace a crashed owner's
-        // lock: a second unlink could otherwise remove the first new lock.
-        if (error.code === 'ESRCH') throw new Error(`上次启动器未正常退出。确认没有其他启动器后，删除 ${file}，再双击重试。`)
-      }
-      throw new Error('另一个启动器正在准备播放器，请等待它完成。')
+      const lock = await inspectLock(file)
+      if (!lock) continue
+      const state = lockState(lock, { alive, now, staleMs })
+      if (state === 'unready') throw new Error(`启动锁尚未就绪。请稍后再次双击；如果持续出现，可删除 ${file} 后重试。`)
+      if (state === 'live') throw new Error('另一个启动器正在准备播放器，请等待它完成。')
+      await removeStaleLock(file, lock, now)
     }
   }
   throw new Error('无法取得启动锁，请稍后重试。')
 }
 
-async function startServer(projectDir, dataDir, port) {
+// "listen EACCES" = port reserved by the system (Windows excluded port ranges); "listen EADDRINUSE" = taken meanwhile.
+export const portFailure = (text) => /listen (?:EACCES|EADDRINUSE)\b/.test(text)
+
+async function startOnAvailablePort(projectDir, dataDir, state, probe, start) {
+  const unusable = new Set()
+  while (state.kind !== 'ours') {
+    try { await start(projectDir, dataDir, state.port); return state } catch (error) {
+      if (error.code !== 'PORT_UNAVAILABLE') throw error
+      unusable.add(state.port)
+      console.log(`端口 ${state.port} 无法使用（被系统保留或刚被其他程序占用），改用下一个端口…`)
+      state = await choosePort(projectDir, probe, undefined, unusable)
+    }
+  }
+  return state
+}
+
+export async function startServer(projectDir, dataDir, port) {
   const logPath = path.join(dataDir, 'player-service.log')
+  const logOffset = (await fs.stat(logPath).catch(() => null))?.size ?? 0
   const log = await fs.open(logPath, 'a')
   await log.write(`\n[${new Date().toISOString()}] 启动播放器，端口 ${port}\n`)
   let child
@@ -229,7 +294,9 @@ async function startServer(projectDir, dataDir, port) {
     }
     await wait(250)
   }
-  const tail = (await fs.readFile(logPath, 'utf8')).split('\n').slice(-16).join('\n')
+  const logBytes = await fs.readFile(logPath)
+  if (child.exitCode !== null && portFailure(logBytes.subarray(logOffset).toString('utf8'))) throw Object.assign(new Error(`端口 ${port} 无法使用。`), { code: 'PORT_UNAVAILABLE', port })
+  const tail = logBytes.toString('utf8').split('\n').slice(-16).join('\n')
   throw new Error(`播放器尚未就绪。${startupError?.message ?? ''}\n日志：${logPath}\n${tail}`)
 }
 
@@ -252,7 +319,7 @@ export async function launchMusic({ projectDir = PROJECT_DIR, dataDir, probe = p
       if (state.kind !== 'ours') {
         await prepare(projectDir)
         state = await choosePort(projectDir, probe)
-        if (state.kind !== 'ours') await start(projectDir, dataDir, state.port)
+        state = await startOnAvailablePort(projectDir, dataDir, state, probe, start)
       }
     } finally { await release() }
   }

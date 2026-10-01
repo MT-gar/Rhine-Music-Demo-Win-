@@ -20,6 +20,7 @@ const version = JSON.parse(await fs.readFile(path.join(PROJECT_DIR, 'package.jso
 const zip = path.resolve(process.argv[2] ?? path.join(PROJECT_DIR, 'release', `Rhine-Music-Demo-v${version}-Windows.zip`))
 const system32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const portFree = (port) => new Promise((resolve) => { const probe = http.createServer(); probe.once('error', () => resolve(false)); probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true))) })
 const steps = []
 const ok = (message) => { steps.push(message); console.log(`  ✔ ${message}`) }
 
@@ -87,12 +88,13 @@ try {
   await put(path.join(library, '$RECYCLE.BIN', 'S-1-5', 'junk.wav'), wav())
   await fs.copyFile(path.join(PROJECT_DIR, 'public/icons/icon-192.png'), path.join(library, '专辑 甲 (Deluxe)', 'cover.png'))
 
+  if (!await portFree(5175)) throw new Error('端口 5175 已被占用（可能是另一份正在运行的播放器）。冒烟测试需要 5175 空闲：请先关闭它再运行，测试不会去结束别人的进程。')
   const code = await launchExe()
   assert.equal(code, 0, `Rhine Music.exe 退出码 ${code}`)
   const service = await findService()
   assert.ok(service, '没有找到本包的音乐服务')
-  assert.equal(service.port, 5175, `默认应使用 5175，实际 ${service.port}`)
   killers.add(service.pid)
+  assert.equal(service.port, 5175, `默认应使用 5175，实际 ${service.port}`)
   ok(`无 Node.js 的 PATH 下，exe 启动服务成功（端口 ${service.port}，PID ${service.pid}）`)
 
   const window = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${service.pid}).MainWindowHandle`], { encoding: 'utf8' })
