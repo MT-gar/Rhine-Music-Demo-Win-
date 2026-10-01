@@ -1,6 +1,6 @@
 # 原版操作到音乐播放器的适配审计
 
-> 历史开发记录：以下范围、参数与验证结论对应文中所述阶段，不代表 V0.1.0 本次已复验；发布版差异见 [验证记录说明](README.md)。
+> 历史开发记录：以下范围、参数与验证结论对应文中所述阶段，不代表 V0.3.0 本次已复验；发布版差异见 [验证记录说明](README.md)。
 
 日期：2026-09-09。检查范围：`src/archive-main.ts`（保留的原 `main.ts`）、`src/model-viewer.ts`、`src/audio-settings.ts`、`src/quality-settings.ts`、`src/pwa.ts`。
 

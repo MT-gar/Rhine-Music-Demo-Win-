@@ -195,7 +195,7 @@ stage.innerHTML = `
       <button data-action="search" aria-label="搜索">${icons.search}<span>搜索</span></button>
       <div class="theme-switch" aria-label="主题">${(["day", "night"] as Theme[]).map((t) => `<button data-theme="${t}" aria-label="${themeNames[t]}主题" aria-pressed="${preferences.theme === t}"><i class="theme-dot ${t}"></i><span>${themeNames[t]}</span></button>`).join("")}</div>
       <button data-action="settings" class="icon-button" aria-label="播放与画质设置">${icons.settings}</button>
-      <div class="minimal-transport" role="group" aria-label="音乐播放"><span id="transport-track" class="transport-track" aria-hidden="true"><span id="transport-track-label"></span></span><button data-action="play-pause" id="play-pause" aria-label="播放" aria-pressed="false"><span class="transport-glyph transport-play" aria-hidden="true">${icons.play}</span><span class="transport-glyph transport-pause" aria-hidden="true">${icons.pause}</span></button><button data-action="stop" id="stop-playback" aria-label="停止">${icons.stop}</button></div>
+      <div class="minimal-transport" role="group" aria-label="音乐播放"><button type="button" data-action="locate-playing" id="transport-track" class="transport-track" aria-label="定位当前歌曲" aria-hidden="true" disabled><span id="transport-track-label"></span></button><button data-action="play-pause" id="play-pause" aria-label="播放" aria-pressed="false"><span class="transport-glyph transport-play" aria-hidden="true">${icons.play}</span><span class="transport-glyph transport-pause" aria-hidden="true">${icons.pause}</span></button><button data-action="stop" id="stop-playback" aria-label="停止">${icons.stop}</button></div>
     </nav>
   </header>
   <div id="library-status" class="library-status"><i></i><span>正在读取本地音乐索引</span></div>
@@ -324,16 +324,16 @@ const browseTransition = new SurfaceTransition(
 let detailIdentity = "",
   pendingDetailFocus = false;
 const trackFocus = new MusicTrackFocus();
-let pendingSearchTrack: { albumId: string; trackId: string } | undefined;
-function cancelSearchTrack() {
-  pendingSearchTrack = undefined;
+let pendingTrackReveal: { albumId: string; trackId: string } | undefined;
+function cancelTrackReveal() {
+  pendingTrackReveal = undefined;
   trackFocus.cancel();
 }
 // The pane is interactive while its entrance is finishing. Cancel a queued
 // reveal too, so a click/scroll in that interval is never pulled back later.
 for (const event of ["wheel", "pointerdown", "touchstart", "keydown"] as const) {
   $("#album-detail-content").addEventListener(event, () => {
-    if (pendingSearchTrack) cancelSearchTrack();
+    if (pendingTrackReveal) cancelTrackReveal();
   }, { passive: true });
 }
 let libraryRebuilding = false;
@@ -399,7 +399,7 @@ const presentation = new MusicPresentation({
 boot = new MusicBoot(stage, {
   reduced: () => preferences.reduced,
   onStart: () => {
-    cancelSearchTrack();
+    cancelTrackReveal();
     presentation.reset();
     detailTransition.hide(true);
     browseTransition.hide(true);
@@ -564,7 +564,7 @@ async function applyLibrary() {
   );
   if (scene && ready && oldVisual !== visualKey(albums, genres)) {
     const reopen = presentation.openingOrDetail;
-    cancelSearchTrack();
+    cancelTrackReveal();
     libraryRebuilding = true;
     libraryIntent = undefined;
     presentation.reset();
@@ -582,7 +582,7 @@ async function applyLibrary() {
     else showBrowseSurface();
   }
   if (!albums.length) {
-    cancelSearchTrack();
+    cancelTrackReveal();
     presentation.reset();
   }
   stage.dataset.mode = mode;
@@ -622,8 +622,9 @@ function updateStatus() {
           ? `查询专辑介绍 ${library.introductions.completed}/${library.introductions.total}`
           : demo
             ? "演示专辑 · 加入音乐后显示真实封面"
-            : `${n} 张专辑 · ${tracks} 首音乐 · 本地索引`;
+            : "";
   $("#library-status span").textContent = label;
+  $("#library-status").hidden = !label;
   $("#library-status").classList.toggle(
     "working",
     !!library.scan.running ||
@@ -701,7 +702,7 @@ function commitSelection(index: number, navigation?: ArchiveNavigation, keepDeta
 }
 function select(index: number, navigation?: ArchiveNavigation, openAfter = presentation.openingOrDetail, route?: AlbumSelection["route"]) {
   if (!records.length || !ready || boot?.active || index < 0) return;
-  if (route !== "archive") cancelSearchTrack();
+  if (route !== "archive") cancelTrackReveal();
   const pending = libraryRebuilding && libraryIntent && "index" in libraryIntent
     ? libraryIntent : presentation.pendingSelection;
   const previous = pending?.navigation;
@@ -716,6 +717,31 @@ function select(index: number, navigation?: ArchiveNavigation, openAfter = prese
     return;
   }
   presentation.select({ index: wrap(index, records.length), navigation, route }, openAfter);
+}
+/** Playback can reuse its open album; other targets take the archive route. */
+function revealAlbum(albumId: string, trackId?: string, options: { reuseOpenAlbum?: boolean } = {}) {
+  closePanel(() => {
+    cancelTrackReveal();
+    if (!ready || boot?.active) return;
+    const index = records.findIndex((record) => record.id === albumId);
+    const album = albums.find((item) => item.id === albumId);
+    if (index < 0 || !album || (trackId && !album.tracks.some((track) => track.id === trackId))) {
+      notify("这张专辑或歌曲已不在当前音乐库中，请刷新音乐库后重试。");
+      return;
+    }
+    if (options.reuseOpenAlbum && trackId && !libraryRebuilding &&
+      currentAlbum()?.id === albumId && presentation.openingOrDetail &&
+      !presentation.pendingSelection &&
+      ["detail", "opening", "switching"].includes(presentation.phase)) {
+      // Preserve the camera and current scroll position. If the album is still
+      // entering, the usual detail gate below will wait before revealing it.
+      setTab("tracks");
+      pendingTrackReveal = { albumId, trackId };
+      return;
+    }
+    if (trackId) pendingTrackReveal = { albumId, trackId };
+    select(index, undefined, true, "archive");
+  });
 }
 function navigationSelection() {
   if (libraryRebuilding && libraryIntent && "index" in libraryIntent) return libraryIntent.index;
@@ -746,7 +772,7 @@ function stepGenre(direction: number) {
 }
 function setMode(next: "archive" | "detail") {
   if (boot?.active) return;
-  if (next === "archive") cancelSearchTrack();
+  if (next === "archive") cancelTrackReveal();
   if (libraryRebuilding) { libraryIntent = { mode: next }; return; }
   if (next === "detail") {
     if (currentAlbum()) presentation.open();
@@ -761,7 +787,7 @@ function syncTabIndicator(animate = true) {
 }
 function setTab(tab: "tracks" | "about") {
   if (activeTab === tab) return;
-  cancelSearchTrack();
+  cancelTrackReveal();
   activeTab = tab;
   document.querySelectorAll<HTMLElement>("[data-tab]").forEach((button) => {
     const active = button.dataset.tab === tab;
@@ -952,7 +978,7 @@ function updatePlayingRows() {
 }
 let lastPlayerError = "";
 const transportTitleMotion = setupTransportTitle(
-  $("#transport-track"),
+  $<HTMLButtonElement>("#transport-track"),
   $("#transport-track-label"),
 );
 transportTitleMotion.setReduced(preferences.reduced);
@@ -1009,7 +1035,7 @@ function closePanel(after?: () => void) {
 }
 function openPanel(next: Panel) {
   if (!next) return closePanel();
-  cancelSearchTrack();
+  cancelTrackReveal();
   panelTransition?.dispose();
   pendingPanelAfter = undefined;
   panelClosing = false;
@@ -1247,15 +1273,7 @@ document.addEventListener("click", (e) => {
     return;
   }
   if (target.dataset.album) {
-    const id = target.dataset.album;
-    const trackId = target.dataset.searchTrack;
-    closePanel(() => {
-      cancelSearchTrack();
-      const index = records.findIndex((r) => r.id === id);
-      if (index < 0) return;
-      if (trackId) pendingSearchTrack = { albumId: id, trackId };
-      select(index, undefined, true, "archive");
-    });
+    revealAlbum(target.dataset.album, target.dataset.searchTrack);
     return;
   }
   if (target.dataset.tab) {
@@ -1282,6 +1300,11 @@ document.addEventListener("click", (e) => {
     return;
   }
   switch (action) {
+    case "locate-playing": {
+      const track = playerState.currentTrack;
+      if (track) revealAlbum(track.albumId, track.id, { reuseOpenAlbum: true });
+      break;
+    }
     case "close-panel":
     case "dismiss-panel":
       closePanel();
@@ -1575,12 +1598,12 @@ function frame(ms: number) {
         $("#album-detail-content").focus({ preventScroll: true });
         pendingDetailFocus = false;
       }
-      if (pendingSearchTrack && !panel && !viewer?.isOpen &&
+      if (pendingTrackReveal && !panel && !viewer?.isOpen &&
         $("#music-detail").dataset.transition === "open" &&
-        currentAlbum()?.id === pendingSearchTrack.albumId) {
+        currentAlbum()?.id === pendingTrackReveal.albumId) {
         const content = $("#album-detail-content");
-        const trackId = pendingSearchTrack.trackId;
-        pendingSearchTrack = undefined;
+        const trackId = pendingTrackReveal.trackId;
+        pendingTrackReveal = undefined;
         const row = Array.from(content.querySelectorAll<HTMLButtonElement>(".track-row"))
           .find((item) => item.dataset.track === trackId);
         if (row) trackFocus.reveal(content, row, preferences.reduced);

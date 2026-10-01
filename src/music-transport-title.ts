@@ -1,7 +1,7 @@
 import { createRollingText } from "@kitlangton/rolling-number";
 
 /** Keep one interruptible archive-style reel while the outer playback slot grows. */
-export function setupTransportTitle(slot: HTMLElement, label: HTMLElement) {
+export function setupTransportTitle(slot: HTMLButtonElement, label: HTMLElement) {
   const measure = document.createElement("span");
   measure.className = "transport-title-measure";
   const reel = document.createElement("span");
@@ -75,11 +75,13 @@ export function setupTransportTitle(slot: HTMLElement, label: HTMLElement) {
       visible = shown;
       slot.classList.toggle("visible", shown);
       slot.setAttribute("aria-hidden", String(!shown));
+      slot.disabled = !shown;
       if (changed) {
         title = next;
         // Native text measures the full name and supplies the accessible label.
         measure.textContent = title;
-        slot.title = title;
+        slot.title = `定位歌曲：${title}`;
+        slot.setAttribute("aria-label", `定位歌曲：${title}`);
         reconcile(wasVisible);
       }
       if (shown !== wasVisible) controller.update({ animated: shown && !reduced });

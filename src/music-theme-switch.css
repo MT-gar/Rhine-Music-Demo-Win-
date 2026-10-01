@@ -111,7 +111,7 @@
   gap: 1px;
 }
 
-.music-app[data-layout="portrait"] .music-topnav .minimal-transport button {
+.music-app[data-layout="portrait"] .music-topnav .minimal-transport button:not(.transport-track) {
   flex: 0 0 24px;
   width: 24px;
 }
@@ -130,5 +130,5 @@
 
 .music-app[data-layout="portrait"] .music-back {
   left: 22px;
-  top: 146px;
+  top: 118px;
 }

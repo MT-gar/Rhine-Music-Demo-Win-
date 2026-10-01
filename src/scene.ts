@@ -15,7 +15,7 @@ import { DecryptionController } from "./decryption";
 import { archiveColumns, columnFiles, fileAtSlot, fileLocation, musicLibrary, records, slotStride } from "./data";
 import { CoverAtlas } from "./cover-atlas";
 import { MusicSelectionLighting } from "./music-lighting";
-import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from "./music-camera";
+import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveOffset, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from "./music-camera";
 import { MUSIC_CD_ASSET } from "./music-cd-asset";
 import { MUSIC_MODEL, configureMusicGlass, musicAssemblyPart, normalizeMusicGeometry } from "./music-model";
 import {
@@ -1551,29 +1551,30 @@ export class ArchiveScene {
         cameraAim.lerp(centerAim, musicCinematicPose(shot).centered);
       }
     }
-    const framing = archiveFraming(this.container.clientWidth, this.container.clientHeight, span, detail,
+    const width = this.container.clientWidth, height = this.container.clientHeight;
+    const framing = archiveFraming(width, height, span, detail,
       this.container.closest<HTMLElement>("[data-layout]")?.dataset.layout === "compact");
+    const right = new THREE.Vector3()
+      .crossVectors(new THREE.Vector3(0, 1, 0), viewDirection).normalize();
+    const up = new THREE.Vector3().crossVectors(viewDirection, right).normalize();
+    const previewShift = new THREE.Vector3();
+    if (musicLibrary) {
+      const offset = musicArchiveOffset(width, height);
+      previewShift.addScaledVector(right, offset.x * framing.span * width / Math.max(1, height));
+      previewShift.addScaledVector(up, offset.y * framing.span);
+    }
     if (musicIntro) {
       // Keep the film's corner tracking early, then release it smoothly to
       // the existing browsing composition, including the portrait endpoint.
       const previewAim = arrayAim.clone();
       if (framing.portrait) {
-        const right = new THREE.Vector3()
-          .crossVectors(new THREE.Vector3(0, 1, 0), viewDirection).normalize();
-        const up = new THREE.Vector3().crossVectors(viewDirection, right).normalize();
         previewAim.set(0, -4.6 + settlingWave(0, 26.56) + 0.4 + 1.85, -2.17);
         previewAim.addScaledVector(up, (framing.previewY - 0.5) * framing.span);
       }
+      previewAim.add(previewShift);
       cameraAim.lerp(previewAim, introSettle);
     }
     if (!cinematic) {
-      const right = new THREE.Vector3()
-        .crossVectors(new THREE.Vector3(0, 1, 0), viewDirection)
-        .normalize();
-      const up = new THREE.Vector3()
-        .crossVectors(viewDirection, right)
-        .normalize();
-      const width = this.container.clientWidth, height = this.container.clientHeight;
       const pixelScale = height / framing.span;
       if (framing.portrait) {
         // Keep the preview camera independent of the live lift, wave and rail.
@@ -1582,6 +1583,7 @@ export class ArchiveScene {
         previewAim.addScaledVector(up, (framing.previewY - 0.5) * height / pixelScale);
         cameraAim.copy(previewAim);
       }
+      cameraAim.add(previewShift);
       // The array rail moves around a fixed inspection slot. Following the new
       // model position here would first chase its adjacent slot, then reverse
       // when that slot reaches the camera; following its lift cancels extraction.

@@ -234,6 +234,10 @@
   background: var(--accent);
   animation: music-pulse 1.3s ease-in-out infinite;
 }
+/* Return occupies this row below the brand while album details are open. */
+.music-app[data-mode="detail"] .library-status {
+  visibility: hidden;
+}
 .album-callout {
   position: absolute;
   left: 57%;
@@ -458,6 +462,7 @@
   margin: 0 8px;
 }
 .music-detail {
+  --detail-content-top: 170px;
   position: absolute;
   inset: 0;
   z-index: 3;
@@ -466,7 +471,7 @@
 .music-back {
   position: absolute;
   left: 42px;
-  top: 168px;
+  top: 112px;
   font-size: 10px;
   pointer-events: auto;
   display: flex;
@@ -509,7 +514,7 @@
   position: absolute;
   left: 58%;
   right: 4.5%;
-  top: 170px;
+  top: var(--detail-content-top);
   bottom: 52px;
   overflow: auto;
   scrollbar-width: thin;
@@ -542,7 +547,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(90deg, transparent 34%, var(--veil) 57%, var(--page-bg) 96%);
+  background: linear-gradient(90deg, transparent 42%, var(--veil) 66%, var(--page-bg) 96%);
 }
 .music-app[data-layout="portrait"] .music-browse-veil {
   background: linear-gradient(180deg, transparent 28%, var(--page-bg) 62%);
@@ -1296,12 +1301,14 @@
   .music-counter b {
     font-size: 65px;
   }
+  .music-detail {
+    --detail-content-top: 210px;
+  }
   .music-detail #album-detail-content {
-    top: 210px;
     bottom: 75px;
   }
   .music-back {
-    top: 211px;
+    top: 144px;
     left: 62px;
     font-size: 12px;
   }
@@ -1429,14 +1436,16 @@
     margin-left: 0;
   }
   .music-back {
-    top: 133px;
+    top: 91px;
     left: 27px;
   }
   .card-caption {
     left: 27px;
   }
+  .music-detail {
+    --detail-content-top: 132px;
+  }
   .music-detail #album-detail-content {
-    top: 132px;
     right: 4%;
     left: 56%;
     bottom: 40px;
@@ -1643,7 +1652,7 @@
     bottom: 0;
   }
   .music-back {
-    top: 118px;
+    top: 87px;
     left: 22px;
     font-size: 9px;
     gap: 16px;
@@ -2077,7 +2086,8 @@
 .album-callout h1 {
   flex-shrink: 0;
   font-size: var(--album-title-size, clamp(26px, 2.7vw, 44px));
-  line-height: 1.16;
+  /* MiSans needs room for its full ascent/descent inside each clipped reel. */
+  line-height: 1.4;
   margin-bottom: 13px;
   overflow-wrap: anywhere;
   letter-spacing: -0.6px;
@@ -2268,7 +2278,7 @@
   position: absolute;
   inset: 0 0 auto;
   display: block;
-  line-height: 1.16;
+  line-height: inherit;
 }
 .music-title-slot {
   position: absolute;
@@ -2278,7 +2288,7 @@
   padding-inline: 0.15em;
   margin-inline-start: -0.15em;
   overflow: hidden;
-  mask-image: linear-gradient(to bottom, transparent, #000 0.08em, #000 calc(100% - 0.08em), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 0.02em, #000 calc(100% - 0.02em), transparent);
 }
 .music-title-wheel {
   position: absolute;
@@ -2300,12 +2310,11 @@
   color: var(--muted);
 }
 
-/* Give the selected album more space from the array without narrowing its text. */
-@media (min-width: 1101px) {
-  .music-app:not([data-layout="portrait"]) .album-callout {
-    left: 61%;
-    right: max(24px, 2.2%);
-  }
+/* Reserve about 7/24 of the landscape view for the selected album's text. */
+.music-app:not([data-layout="portrait"]) .album-callout {
+  left: 68.633333%;
+  right: max(24px, 2.2%);
+  max-width: none;
 }
 
 /* Keep a third of the portrait view for album text, above the measured ruler. */

@@ -3,7 +3,7 @@ import type { ArchiveNavigation } from "./archive-loop.ts";
 export interface AlbumSelection {
   index: number;
   navigation?: ArchiveNavigation;
-  /** Search navigation returns to the archive before selecting and reopening. */
+  /** Track/search navigation returns to the archive before selecting and reopening. */
   route?: "archive";
 }
 
@@ -166,8 +166,8 @@ export class MusicPresentation {
     this.ports.hideMenu(() => {
       if (revision !== this.revision) return;
       if (!this.wantsDetail || this.pendingSelection?.route === "archive") {
-        // Esc or a search reuses the text exit already in progress. Search
-        // keeps its target until the archive camera and rail have settled.
+        // Esc or a track/search reveal reuses the text exit in progress.
+        // Reveals keep their target until the archive camera and rail settle.
         this.returnToArchive();
         return;
       }

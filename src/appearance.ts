@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { glassRevealGLSL, frostedTransmissionGLSL, FROSTED_ROUGHNESS } from "./glass-reveal.ts";
 import { internalOpticsFragment } from "./internal-optics.ts";
-import { setMusicGlassClarity } from "./music-model.ts";
+import { setMusicGlassClarity, setMusicGlassTheme } from "./music-model.ts";
 import { ThemeTransition } from "./theme-transition.ts";
 
 import type { MusicSelectionLighting } from "./music-lighting";
@@ -104,7 +104,7 @@ export class CardAppearance {
       if (child.userData.musicShell) {
         child.userData.glassClarity.value = clarity;
         if (child.userData.surface === "Frosted_Polymer")
-          setMusicGlassClarity(child.material as Surface, clarity);
+          setMusicGlassClarity(child.material as Surface, clarity, this.warmth.value);
         return;
       }
       if (child.userData.keepFrosted) return;
@@ -203,6 +203,7 @@ export class CardAppearance {
         } else if (name === "Optical_Diffuser") {
           targets.color(mat.color, theme === "night" ? "#c6d6e5" : "#91a4af");
         } else if (name === "Index_Inlay") targets.color(mat.color, theme === "night" ? "#d7e9ff" : "#b9d2df");
+        setMusicGlassTheme(name, mat, theme === "day", targets);
       }
     }
     if (!transition) targets.finish();

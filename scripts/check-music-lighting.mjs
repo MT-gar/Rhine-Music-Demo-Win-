@@ -6,11 +6,21 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { COLUMN_SPACING, ROW_SPACING, LOOP_COLUMNS, LOOP_ROWS, visibleCell } from '../src/archive-loop.ts';
 import { MUSIC_MODEL, normalizeMusicGeometry, createAlbumPrintMaterial } from '../src/music-model.ts';
 
-const source = fs.readFileSync(new URL('../src/music-lighting.ts', import.meta.url), 'utf8');
-const moduleUrl = new URL('../node_modules/three/build/three.module.js', import.meta.url).href;
-const modelUrl = new URL('../src/music-model.ts', import.meta.url).href;
-const code = ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replace('"three"', JSON.stringify(moduleUrl)).replace('"./music-model.ts"', JSON.stringify(modelUrl));
-const { MusicSelectionLighting } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+// Resolve every production import, including the shared theme transition.
+// Both classes use parameter properties that require transpilation for Node.
+function sourceModule(path, overrides = {}) {
+  const url = new URL(path, import.meta.url);
+  const { outputText } = ts.transpileModule(fs.readFileSync(url, 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  });
+  const code = outputText.replace(/from\s+(["'])([^"']+)\1/g, (_match, _quote, specifier) =>
+    `from ${JSON.stringify(overrides[specifier] ?? (specifier.startsWith('.') ? new URL(specifier, url).href : import.meta.resolve(specifier)))}`);
+  return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
+}
+const transitionUrl = sourceModule('../src/theme-transition.ts');
+const { MusicSelectionLighting } = await import(sourceModule('../src/music-lighting.ts', {
+  './theme-transition.ts': transitionUrl,
+}));
 function setup() {
   const light = new MusicSelectionLighting(new THREE.Scene());
   const model = new THREE.Group();
@@ -122,4 +132,4 @@ assert.ok(opening.light.spot.target.position.distanceTo(replayTarget)<1e-10,'A c
 a.light.update(a.model,a.camera,0,false,false);
 assert.equal(a.light.spot.visible,false);
 assert.equal(a.light.spot.castShadow,false);
-console.log(`Music lighting passed: actual 5×3.35 shell edge alignment, narrow warm ribbon, unchanged cover shader, gradual start, frame-rate independence, rapid reversal, reduced motion, lower-left direction, neighboring-column cone coverage, full-pool clearance ${minimumClearance.toFixed(2)}, cinematic track/replay anchoring, empty-library disable.`);
+console.log(`Music lighting passed: actual 4.45×3.35 shell edge alignment, narrow warm ribbon, unchanged cover shader, gradual start, frame-rate independence, rapid reversal, reduced motion, lower-left direction, neighboring-column cone coverage, full-pool clearance ${minimumClearance.toFixed(2)}, cinematic track/replay anchoring, empty-library disable.`);

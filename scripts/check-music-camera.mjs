@@ -1,7 +1,30 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from '../src/music-camera.ts';
+import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveOffset, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from '../src/music-camera.ts';
 import { damp } from '../src/motion.ts';
+
+for (const [width, height] of [[390, 844], [1080, 1920], [1049, 1000], [0, 0]]) {
+  assert.deepEqual(musicArchiveOffset(width, height), { x: 0, y: 0 },
+    'Portrait retains its own camera composition, including at the layout boundary');
+}
+for (const [width, height] of [[1050, 1000], [1024, 768], [1440, 900], [1920, 1080], [1280, 720]]) {
+  assert.deepEqual(musicArchiveOffset(width, height), { x: 0, y: .08 },
+    'Every landscape view through 16:9 reserves eight percent of its height above the raised album');
+}
+const halfwayOffset = musicArchiveOffset(2220, 1080);
+assert.ok(Math.abs(halfwayOffset.x - .0175) < 1e-12 && Math.abs(halfwayOffset.y - .09) < 1e-12,
+  'Intermediate wide screens gradually move left and add vertical headroom');
+for (const [width, height] of [[2520, 1080], [2560, 1080], [3840, 1080]]) {
+  assert.deepEqual(musicArchiveOffset(width, height), { x: .035, y: .1 },
+    'Wide-screen movement is capped at 3.5 percent horizontally and ten percent vertically');
+}
+const scaleIndependent = musicArchiveOffset(3814, 1656), sameAspect = musicArchiveOffset(1907, 828);
+assert.deepEqual(scaleIndependent, sameAspect, 'Matching aspect ratios use matching composition at different pixel densities');
+for (const width of [1920, 2520]) {
+  const before = musicArchiveOffset(width - .01, 1080), after = musicArchiveOffset(width + .01, 1080);
+  assert.ok(Math.hypot(after.x - before.x, after.y - before.y) < 1e-10,
+    'The 16:9 and 21:9 framing joins have no position or velocity jump');
+}
 
 function setup() {
   const camera = new THREE.PerspectiveCamera();
@@ -208,5 +231,5 @@ for (const hz of [30, 120]) {
     tracks[key].velocity = speed;
   }
 }
-console.log('Music camera passed: continuous motion, frame-rate independence, original-film oblique pause/frontal ending, shared entry/return gates, elevated detail, interruption, replay and reduced motion.');
+console.log('Music camera passed: landscape headroom and framing boundaries, continuous motion, frame-rate independence, original-film oblique pause/frontal ending, shared entry/return gates, elevated detail, interruption, replay and reduced motion.');
 console.log(`Presentation pan: ${(pan240.early * 100).toFixed(3)}% at 0.2 s; 95% at ${pan240.t95.toFixed(3)} s (rendered camera, 240 Hz).`);

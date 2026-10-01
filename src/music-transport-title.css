@@ -3,7 +3,7 @@
   --song-cap: clamp(0px, calc(100vw - 760px), 240px);
   flex-shrink: 0;
 }
-.music-topnav .transport-track {
+.music-topnav .minimal-transport button.transport-track {
   display: block;
   position: relative;
   flex: none;
@@ -11,12 +11,15 @@
   margin-right: -6px;
   overflow: hidden;
   white-space: nowrap;
+  text-align: left;
+  pointer-events: none;
   opacity: 0;
   transition: width 640ms cubic-bezier(0.4, 0, 0.2, 1), opacity 400ms ease;
 }
-.music-topnav .transport-track.visible {
+.music-topnav .minimal-transport .transport-track.visible {
   width: min(var(--song-width, 240px), var(--song-cap));
   opacity: 1;
+  pointer-events: auto;
 }
 .transport-track > span {
   display: block;
@@ -54,7 +57,7 @@
 }
 @media (max-width: 700px) {
   .music-topnav { --song-cap: clamp(0px, calc(100vw - 340px), 100px); }
-  .music-topnav .transport-track { margin-right: -1px; }
+  .music-topnav .minimal-transport button.transport-track { margin-right: -1px; }
   .transport-track > span { font-size: 10px; }
 }
 @media (max-width: 480px) {
@@ -62,7 +65,7 @@
   .music-brand strong { font-size: clamp(18px, 5vw, 24px); }
   .music-brand span { font-size: 6px; letter-spacing: 0.8px; }
 }
-.reduce-motion .transport-track,
+.reduce-motion .music-topnav .minimal-transport button.transport-track,
 .reduce-motion .transport-track > span {
   transition: none;
 }

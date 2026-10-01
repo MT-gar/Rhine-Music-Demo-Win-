@@ -2,7 +2,7 @@
 
 此目录保留 Blender 场景和对应建模脚本，用于维护与复现。正常运行播放器不需要安装 Blender；运行时资源位于 `public/assets/`。
 
-- `music-cd.blend` / `build_music_cd.py`：音乐模式玻璃 CD 盒；V0.1.0 的显示尺寸由前端运行时调整。
+- `music-cd.blend` / `build_music_cd.py`：音乐模式玻璃 CD 盒；V0.3.0 的显示尺寸由前端运行时调整。
 - `rhine-archive.blend` / `build_archive.py`：保留的原版档案盒。
 - `archive-assembly.blend` / `build_assembly.py`：原版拆解模型。
 - 其余 `.py` 是共享结构、外壳和审阅场景脚本；生成的 `.blend1` 备份、`.cache/` 和审阅 PNG 不随发布分发。

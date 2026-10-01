@@ -1,7 +1,7 @@
 import content from "../content/archives.json" with { type: "json" };
 import type { MusicAlbum, MusicGenre } from "./music-types";
-import { musicArtistKey, orderMusicAlbums, type MusicSortMode } from "./music-order";
-export { orderMusicAlbums, type MusicSortMode } from "./music-order";
+import { musicArtistKey, orderMusicAlbums, type MusicSortMode } from "./music-order.ts";
+export { orderMusicAlbums, type MusicSortMode } from "./music-order.ts";
 
 export interface ArchiveRecord {
   id: string;

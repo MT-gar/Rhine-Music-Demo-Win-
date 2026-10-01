@@ -1,4 +1,4 @@
-/** One cancellable search reveal, scoped to the detail pane rather than the page. */
+/** One cancellable track reveal, scoped to the detail pane rather than the page. */
 export class MusicTrackFocus {
   private cleanup?: () => void;
 
@@ -27,7 +27,7 @@ export class MusicTrackFocus {
       this.cleanup = undefined;
     };
     this.cleanup = cancel;
-    // A user's own scroll or click always takes precedence over search motion.
+    // A user's own scroll or click always takes precedence over reveal motion.
     container.addEventListener("wheel", cancel, { passive: true });
     container.addEventListener("pointerdown", cancel, { passive: true });
     container.addEventListener("touchstart", cancel, { passive: true });
@@ -47,11 +47,12 @@ export class MusicTrackFocus {
         hold = setTimeout(cancel, 1100);
       } else {
         pulse = row.animate([
-          { backgroundColor: "transparent", boxShadow: "inset 3px 0 transparent", offset: 0 },
-          { backgroundColor: "var(--search-track-tint)", boxShadow: "inset 3px 0 var(--accent)", offset: 0.28 },
-          { backgroundColor: "var(--search-track-tint)", boxShadow: "inset 3px 0 var(--accent)", offset: 0.55 },
+          { backgroundColor: "transparent", boxShadow: "inset 3px 0 transparent", offset: 0, easing: "ease-in-out" },
+          { backgroundColor: "var(--search-track-tint)", boxShadow: "inset 3px 0 var(--accent)", offset: 0.32 },
+          { backgroundColor: "var(--search-track-tint)", boxShadow: "inset 3px 0 var(--accent)", offset: 0.48, easing: "ease-in-out" },
+          { backgroundColor: "transparent", boxShadow: "inset 3px 0 transparent", offset: 0.88 },
           { backgroundColor: "transparent", boxShadow: "inset 3px 0 transparent", offset: 1 },
-        ], { duration: 1100, easing: "ease-in-out" });
+        ], { duration: 1000, iterations: 2 });
         pulse.onfinish = cancel;
       }
     };

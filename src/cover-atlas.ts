@@ -96,10 +96,12 @@ export class CoverAtlas {
   private readonly tileCanvas = document.createElement("canvas");
   private readonly atlas: THREE.CanvasTexture;
   private readonly selectedTexture: THREE.CanvasTexture;
-  private readonly images = new Map<string, Promise<CoverImage | undefined>>();
+  private readonly pendingImages = new Map<string, Promise<CoverImage | undefined>>();
+  private readonly decodedImages = new Map<string, CoverImage | undefined>();
   private readonly slotKeys: (string | undefined)[];
   private readonly recordKeys = new WeakMap<ArchiveRecord, string>();
   private selectedRecord?: ArchiveRecord;
+  private selectedKey?: string;
   private generation = 0;
   private disposed = false;
   private readonly columns = 16;
@@ -194,10 +196,20 @@ export class CoverAtlas {
     this.selected.receiveShadow = true;
   }
 
+  private cachedImage(url?: string) {
+    if (!url || !this.decodedImages.has(url)) return undefined;
+    const image = this.decodedImages.get(url);
+    this.decodedImages.delete(url);
+    this.decodedImages.set(url, image);
+    return image;
+  }
+
   private loadImage(url?: string) {
     if (!url) return Promise.resolve(undefined);
-    let pending = this.images.get(url);
+    if (this.decodedImages.has(url)) return Promise.resolve(this.cachedImage(url));
+    let pending = this.pendingImages.get(url);
     if (!pending) {
+      const generation = this.generation;
       const image = new Image();
       image.crossOrigin = "anonymous";
       image.src = url;
@@ -217,15 +229,24 @@ export class CoverAtlas {
           image.src = "";
           return { source, width, height };
         })
-        .catch(() => undefined);
-      this.images.set(url, pending);
-      if (this.images.size > 48)
-        this.images.delete(this.images.keys().next().value!);
+        .catch(() => undefined)
+        .then((decoded) => {
+          if (!this.disposed && generation === this.generation) {
+            this.decodedImages.set(url, decoded);
+            if (this.decodedImages.size > 48)
+              this.decodedImages.delete(this.decodedImages.keys().next().value!);
+          }
+          if (this.pendingImages.get(url) === pending) this.pendingImages.delete(url);
+          return decoded;
+        });
+      // Share every in-flight decode across the pool; only completed images
+      // enter the bounded LRU, so cycling slots cannot evict pending requests.
+      this.pendingImages.set(url, pending);
     }
     return pending;
   }
 
-  setSlot(slot: number, record: ArchiveRecord | undefined) {
+  private recordKey(record: ArchiveRecord | undefined) {
     // Description/metadata refreshes replace record objects without changing
     // their print. Cache only the visual identity, not the object reference.
     let key = record ? this.recordKeys.get(record) : "";
@@ -233,12 +254,41 @@ export class CoverAtlas {
       key = JSON.stringify([record.id, record.album?.coverUrl, record.title]);
       this.recordKeys.set(record, key);
     }
+    return key!;
+  }
+
+  private copyCover(canvas: HTMLCanvasElement, key: string) {
+    const selected = this.selectedKey === key && canvas !== this.selectedCanvas;
+    const slot = selected ? -1 : this.slotKeys.indexOf(key);
+    if (!selected && slot < 0) return false;
+    const context = canvas.getContext("2d")!;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    // Copy the whole painted tile, including its UV inset, exactly once.
+    if (selected) context.drawImage(this.selectedCanvas, 0, 0, canvas.width, canvas.height);
+    else context.drawImage(
+      this.atlasCanvas,
+      (slot % this.columns) * this.tileWidth,
+      Math.floor(slot / this.columns) * this.tileHeight,
+      this.tileWidth, this.tileHeight,
+      0, 0, canvas.width, canvas.height,
+    );
+    return true;
+  }
+
+  setSlot(slot: number, record: ArchiveRecord | undefined) {
+    const key = this.recordKey(record);
     if (this.slotKeys[slot] === key) return;
+    const image = this.cachedImage(record?.album?.coverUrl);
+    // Reuse the target album's existing print before assigning this slot's
+    // identity; otherwise the lookup could copy the slot's previous album.
+    if (image) paintCover(this.tileCanvas, record, image);
+    else if (!this.copyCover(this.tileCanvas, key)) paintCover(this.tileCanvas, record);
     this.slotKeys[slot] = key;
     const generation = this.generation;
     const draw = (image?: CoverImage) => {
       if (this.disposed || generation !== this.generation || this.slotKeys[slot] !== key) return;
-      paintCover(this.tileCanvas, record, image);
+      if (image) paintCover(this.tileCanvas, record, image);
       const x = (slot % this.columns) * this.tileWidth,
         y = Math.floor(slot / this.columns) * this.tileHeight;
       const context = this.atlasCanvas.getContext("2d")!;
@@ -247,19 +297,28 @@ export class CoverAtlas {
       this.atlas.needsUpdate = true;
     };
     draw();
-    void this.loadImage(record?.album?.coverUrl).then(draw);
+    if (!image) void this.loadImage(record?.album?.coverUrl).then((loaded) => {
+      if (loaded) draw(loaded);
+    });
   }
 
   async select(record: ArchiveRecord | undefined) {
     this.selectedRecord = record;
+    const key = this.recordKey(record);
+    if (this.selectedKey === key) return;
     const generation = this.generation;
-    paintCover(this.selectedCanvas, record);
+    const cached = this.cachedImage(record?.album?.coverUrl);
+    if (cached) paintCover(this.selectedCanvas, record, cached);
+    else if (!this.copyCover(this.selectedCanvas, key)) paintCover(this.selectedCanvas, record);
+    this.selectedKey = key;
     this.selectedTexture.needsUpdate = true;
+    if (cached) return;
     const image = await this.loadImage(record?.album?.coverUrl);
     if (
+      !image ||
       this.disposed ||
       generation !== this.generation ||
-      this.selectedRecord !== record
+      this.selectedKey !== key
     )
       return;
     paintCover(this.selectedCanvas, record, image);
@@ -281,7 +340,7 @@ export class CoverAtlas {
     const record = this.selectedRecord;
     mesh.userData.coverDisposed = false;
     void this.loadImage(record?.album?.coverUrl).then((image) => {
-      if (mesh.userData.coverDisposed || this.disposed) return;
+      if (!image || mesh.userData.coverDisposed || this.disposed) return;
       paintCover(canvas, record, image);
       texture.needsUpdate = true;
     });
@@ -291,11 +350,14 @@ export class CoverAtlas {
     this.generation++;
     this.slotKeys.fill(undefined);
     this.selectedRecord = undefined;
-    this.images.clear();
+    this.selectedKey = undefined;
+    this.pendingImages.clear();
+    this.decodedImages.clear();
   }
   dispose() {
     this.disposed = true;
-    this.images.clear();
+    this.pendingImages.clear();
+    this.decodedImages.clear();
     this.atlas.dispose();
     this.selectedTexture.dispose();
     this.array.geometry.dispose();

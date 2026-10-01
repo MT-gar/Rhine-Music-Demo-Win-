@@ -1,5 +1,15 @@
 import * as THREE from "three";
 import { damp, smooth, type Spring } from "./motion.ts";
+import { isPortraitViewport } from "./viewport-layout.ts";
+
+/** Reserve headroom in every landscape view, with a little more on wide screens. */
+export function musicArchiveOffset(width: number, height: number) {
+  if (isPortraitViewport(width, height)) return { x: 0, y: 0 };
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const wide = smooth((aspect - 16 / 9) / (21 / 9 - 16 / 9));
+  // Positive camera-right/up movement places the shelf left/down on screen.
+  return { x: 0.035 * wide, y: 0.08 + 0.02 * wide };
+}
 
 /** Keep the selected corner continuous where the film changes to extraction. */
 export function musicExtractionAnchor(shot: number) {
